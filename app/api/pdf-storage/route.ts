@@ -42,11 +42,12 @@ export async function POST(request: NextRequest) {
 
     const filePath = `${user.id}/${Date.now()}_${fileName}`
     const arrayBuffer = await file.arrayBuffer()
+    const uint8Array = new Uint8Array(arrayBuffer)
 
     const serviceClient = getServiceClient()
     const { error: uploadError } = await serviceClient.storage
       .from(BUCKET_NAME)
-      .upload(filePath, arrayBuffer, { contentType: "application/pdf", upsert: false })
+      .upload(filePath, uint8Array, { contentType: "application/pdf", upsert: false })
 
     if (uploadError) return NextResponse.json({ error: uploadError.message }, { status: 500 })
     return NextResponse.json({ path: filePath, fileName })

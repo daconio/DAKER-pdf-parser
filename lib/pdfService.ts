@@ -89,7 +89,7 @@ export const mergePdfs = async (
     onProgress(i + 1, files.length)
   }
   const bytes = await mergedPdf.save()
-  return new Blob([bytes.buffer as ArrayBuffer], { type: "application/pdf" })
+  return new Blob([new Uint8Array(bytes)], { type: "application/pdf" })
 }
 
 export const splitPdf = async (
@@ -104,7 +104,7 @@ export const splitPdf = async (
     const [page] = await newPdf.copyPages(srcPdf, [pages[i] - 1])
     newPdf.addPage(page)
     const pdfBytes = await newPdf.save()
-    results.push(new Blob([pdfBytes.buffer as ArrayBuffer], { type: "application/pdf" }))
+    results.push(new Blob([new Uint8Array(pdfBytes)], { type: "application/pdf" }))
     onProgress(i + 1, pages.length)
   }
   return results

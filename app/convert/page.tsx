@@ -116,8 +116,9 @@ export default function ConvertPage() {
   const [editProcessing, setEditProcessing] = useState(false)
   const [editLoading, setEditLoading] = useState(false)
   const [editStatusText, setEditStatusText] = useState("")
+  const [progressInfo, setProgressInfo] = useState<{ label: string; percent: number } | null>(null)
   const [editFileName, setEditFileName] = useState("")
-  const [editOriginalBytes, setEditOriginalBytes] = useState<ArrayBuffer | null>(null)
+  const [editOriginalBytes, setEditOriginalBytes] = useState<Uint8Array | null>(null)
   const editFileInputRef = useRef<HTMLInputElement>(null)
   const promptInputRef = useRef<HTMLTextAreaElement>(null)
 
@@ -160,11 +161,13 @@ export default function ConvertPage() {
   // Logo overlay state
   const [logoImage, setLogoImage] = useState<string | null>(null)
   const [logoFileName, setLogoFileName] = useState("")
-  const [logoPosition, setLogoPosition] = useState<"top-left" | "top-right" | "bottom-left" | "bottom-right">("bottom-right")
+  const [logoPosition, setLogoPosition] = useState<{ x: number; y: number }>({ x: 87, y: 87 })
   const [logoScale, setLogoScale] = useState(10)
   const [logoMargin, setLogoMargin] = useState(3)
   const [logoOpacity, setLogoOpacity] = useState(100)
+  const [logoNaturalRatio, setLogoNaturalRatio] = useState(1) // height / width
   const logoInputRef = useRef<HTMLInputElement>(null)
+  const logoDragRef = useRef<{ startMouseX: number; startMouseY: number; startPosX: number; startPosY: number } | null>(null)
 
   // Auth state
   const [authUser, setAuthUser] = useState<SupabaseUser | null>(null)
@@ -254,14 +257,10 @@ export default function ConvertPage() {
         return
       }
 
-      const tag = (e.target as HTMLElement).tagName
-      if (tag === "INPUT" || tag === "TEXTAREA") return
-      if (!isAiEdit || editPages.length === 0 || editLoading) return
-
-      // Undo: Cmd+Z (Mac) / Ctrl+Z (Windows)
+      // Undo: Cmd+Z (Mac) / Ctrl+Z (Windows) — works even when INPUT/TEXTAREA is focused
       if (e.key === "z" && (e.metaKey || e.ctrlKey) && !e.shiftKey) {
+        if (!isAiEdit || editPages.length === 0 || editLoading || editProcessing) return
         e.preventDefault()
-        if (editProcessing) return
         if (editSubMode === "direct" && drawCanvasRef.current) {
           const b64 = drawCanvasRef.current.toDataURL("image/png").split(",")[1]
           setEditPages((prev) => prev.map((p, i) => i === editCurrentPage ? { ...p, editedImageBase64: b64 } : p))
@@ -269,6 +268,10 @@ export default function ConvertPage() {
         performUndo()
         return
       }
+
+      const tag = (e.target as HTMLElement).tagName
+      if (tag === "INPUT" || tag === "TEXTAREA") return
+      if (!isAiEdit || editPages.length === 0 || editLoading) return
 
       switch (e.key) {
         case "ArrowLeft":
@@ -354,6 +357,7 @@ export default function ConvertPage() {
     setEditProcessing(false)
     setEditLoading(false)
     setEditStatusText("")
+    setProgressInfo(null)
     setEditFileName("")
     setEditOriginalBytes(null)
     setError("")
@@ -376,7 +380,7 @@ export default function ConvertPage() {
     undoHistoryRef.current.clear()
     setLogoImage(null)
     setLogoFileName("")
-    setLogoPosition("bottom-right")
+    setLogoPosition({ x: 87, y: 87 })
     setLogoScale(10)
     setLogoMargin(3)
     setLogoOpacity(100)
@@ -434,15 +438,21 @@ export default function ConvertPage() {
   }
 
   const uploadPdfToCloud = async () => {
-    if (!authUser || !editOriginalBytes || !editFileName) return
+    if (!authUser) { setError("로그인이 필요합니다."); return }
+    if (editPages.length === 0 || !editFileName) { setError("PDF 파일을 먼저 업로드해주세요."); return }
     setCloudUploading(true)
     setError("")
+    setProgressInfo({ label: "클라우드 업로드 준비 중", percent: 0 })
     try {
-      let pdfBytes: ArrayBuffer
-      if (editPages.some((p) => p.editedImageBase64)) {
-        const pdfDoc = await PDFDocument.load(editOriginalBytes)
+      let pdfBytes: Uint8Array
+      if (editOriginalBytes && editPages.some((p) => p.editedImageBase64)) {
+        const pdfDoc = await PDFDocument.load(new Uint8Array(editOriginalBytes))
+        const editedPages = editPages.filter((p) => p.editedImageBase64)
+        let editIdx = 0
         for (const page of editPages) {
           if (page.editedImageBase64) {
+            editIdx++
+            setProgressInfo({ label: "PDF 생성 중", percent: Math.round((editIdx / editedPages.length) * 50) })
             const imageBytes = Uint8Array.from(atob(page.editedImageBase64), (c) => c.charCodeAt(0))
             const mimeType = page.editedImageBase64.startsWith("/9j") ? "jpeg" : "png"
             const image = mimeType === "jpeg" ? await pdfDoc.embedJpg(imageBytes) : await pdfDoc.embedPng(imageBytes)
@@ -451,19 +461,38 @@ export default function ConvertPage() {
             pdfPage.drawImage(image, { x: 0, y: 0, width, height })
           }
         }
-        const saved = await pdfDoc.save()
-        pdfBytes = saved.buffer as ArrayBuffer
+        pdfBytes = await pdfDoc.save()
+      } else if (editOriginalBytes && !editPages.some((p) => p.editedImageBase64)) {
+        setProgressInfo({ label: "PDF 준비 중", percent: 50 })
+        pdfBytes = new Uint8Array(editOriginalBytes)
       } else {
-        pdfBytes = editOriginalBytes
+        // Fallback: create PDF from page images (e.g. after session recovery)
+        const pdfDoc = await PDFDocument.create()
+        for (let fi = 0; fi < editPages.length; fi++) {
+          const page = editPages[fi]
+          setProgressInfo({ label: "PDF 생성 중", percent: Math.round(((fi + 1) / editPages.length) * 50) })
+          const imgSrc = page.editedImageBase64 || page.originalImageBase64
+          const isJpeg = imgSrc.startsWith("/9j")
+          const res = await fetch(`data:image/${isJpeg ? "jpeg" : "png"};base64,${imgSrc}`)
+          const imageBytes = new Uint8Array(await res.arrayBuffer())
+          const image = isJpeg ? await pdfDoc.embedJpg(imageBytes) : await pdfDoc.embedPng(imageBytes)
+          const pageW = page.width / 2
+          const pageH = page.height / 2
+          const pdfPage = pdfDoc.addPage([pageW, pageH])
+          pdfPage.drawImage(image, { x: 0, y: 0, width: pageW, height: pageH })
+        }
+        pdfBytes = await pdfDoc.save()
       }
 
+      setProgressInfo({ label: "업로드 중", percent: 60 })
       const token = await getAccessToken()
       if (!token) { setError("로그인이 필요합니다."); return }
 
       const formData = new FormData()
-      formData.append("file", new Blob([pdfBytes], { type: "application/pdf" }))
+      formData.append("file", new Blob([new Uint8Array(pdfBytes)], { type: "application/pdf" }))
       formData.append("fileName", editFileName)
 
+      setProgressInfo({ label: "업로드 중", percent: 80 })
       const res = await fetch("/api/pdf-storage", {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
@@ -471,17 +500,19 @@ export default function ConvertPage() {
       })
       const data = await res.json()
       if (!res.ok) { setError(data.error || "업로드 실패"); return }
+      setProgressInfo({ label: "완료", percent: 100 })
       await fetchCloudFiles()
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : "알 수 없는 오류"
+      const msg = e instanceof Error ? e.message : String(e)
       setError(`클라우드 업로드 실패: ${msg}`)
-    } finally { setCloudUploading(false) }
+    } finally { setCloudUploading(false); setProgressInfo(null) }
   }
 
   const downloadFromCloud = async (path: string) => {
     if (!authUser) return
     setEditLoading(true)
     setEditStatusText("클라우드에서 PDF 다운로드 중...")
+    setProgressInfo({ label: "클라우드 다운로드 중", percent: 30 })
     try {
       const token = await getAccessToken()
       if (!token) { setError("로그인이 필요합니다."); setEditLoading(false); return }
@@ -496,17 +527,17 @@ export default function ConvertPage() {
 
       const pdfRes = await fetch(data.signedUrl)
       const arrayBuffer = await pdfRes.arrayBuffer()
-      setEditOriginalBytes(arrayBuffer)
       const fileName = path.split("/").pop()?.replace(/^\d+_/, "") || "cloud.pdf"
-      setEditFileName(fileName)
       setMode(AI_EDIT)
       resetEdit()
+      setEditOriginalBytes(new Uint8Array(arrayBuffer.slice(0)))
+      setEditFileName(fileName)
       await renderEditPdfPages(arrayBuffer)
       setShowCloudPanel(false)
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "알 수 없는 오류"
       setError(`클라우드 파일 로드 실패: ${msg}`)
-    } finally { setEditLoading(false); setEditStatusText("") }
+    } finally { setEditLoading(false); setEditStatusText(""); setProgressInfo(null) }
   }
 
   const deleteFromCloud = async (path: string) => {
@@ -662,13 +693,15 @@ export default function ConvertPage() {
   const renderEditPdfPages = async (arrayBuffer: ArrayBuffer) => {
     setEditLoading(true)
     setEditStatusText("PDF 페이지 렌더링 중...")
+    setProgressInfo({ label: "PDF 변환 중", percent: 0 })
     try {
-      const loadingTask = pdfjs.getDocument({ data: arrayBuffer, cMapUrl: `https://cdn.jsdelivr.net/npm/pdfjs-dist@${PDFJS_VERSION}/cmaps/`, cMapPacked: true })
+      const loadingTask = pdfjs.getDocument({ data: new Uint8Array(arrayBuffer), cMapUrl: `https://cdn.jsdelivr.net/npm/pdfjs-dist@${PDFJS_VERSION}/cmaps/`, cMapPacked: true })
       const pdf = await loadingTask.promise
       const totalPages = pdf.numPages
       const pagesData: EditPageData[] = []
       for (let i = 1; i <= totalPages; i++) {
         setEditStatusText(`페이지 렌더링 중... (${i}/${totalPages})`)
+        setProgressInfo({ label: "PDF 변환 중", percent: Math.round((i / totalPages) * 100) })
         const page = await pdf.getPage(i)
         const viewport = page.getViewport({ scale: 2.0 })
         const canvas = document.createElement("canvas")
@@ -712,14 +745,14 @@ export default function ConvertPage() {
       setEditPages(pagesData)
       setEditCurrentPage(0)
       setEditStatusText("")
-    } catch { setError("PDF를 읽을 수 없습니다.") } finally { setEditLoading(false) }
+    } catch { setError("PDF를 읽을 수 없습니다.") } finally { setEditLoading(false); setProgressInfo(null) }
   }
 
   const handleEditFile = async (file: File) => {
     if (!file.name.endsWith(".pdf")) { setError("PDF 파일만 지원합니다."); return }
     setError(""); setEditFileName(file.name)
     const arrayBuffer = await file.arrayBuffer()
-    setEditOriginalBytes(arrayBuffer)
+    setEditOriginalBytes(new Uint8Array(arrayBuffer.slice(0)))
     await renderEditPdfPages(arrayBuffer)
   }
 
@@ -937,10 +970,12 @@ export default function ConvertPage() {
     const prompt = `전체 배경색을 ${bgColor} 색상으로 변경해주세요. 텍스트, 이미지, 도형 등 다른 모든 요소는 그대로 유지하고 배경색만 변경해주세요.`
     setEditProcessing(true)
     setError("")
+    setProgressInfo({ label: "배경색 적용 중", percent: 0 })
     let failCount = 0
     for (let i = 0; i < editPages.length; i++) {
       setEditCurrentPage(i)
       setEditStatusText(`배경색 변경 중... (${i + 1}/${editPages.length})`)
+      setProgressInfo({ label: "배경색 적용 중", percent: Math.round(((i + 1) / editPages.length) * 100) })
       const page = editPages[i]
       try {
         const res = await fetch("/api/edit-pdf", {
@@ -961,6 +996,7 @@ export default function ConvertPage() {
     }
     setEditProcessing(false)
     setEditStatusText("")
+    setProgressInfo(null)
     if (failCount > 0) {
       setError(`${editPages.length - failCount}/${editPages.length} 페이지 완료 (${failCount}개 실패)`)
     }
@@ -971,11 +1007,45 @@ export default function ConvertPage() {
     if (!file.type.startsWith("image/")) return
     const reader = new FileReader()
     reader.onload = () => {
-      const base64 = (reader.result as string).split(",")[1]
+      const dataUrl = reader.result as string
+      const base64 = dataUrl.split(",")[1]
       setLogoImage(base64)
       setLogoFileName(file.name)
+      const img = new window.Image()
+      img.onload = () => setLogoNaturalRatio(img.naturalHeight / img.naturalWidth)
+      img.src = dataUrl
     }
     reader.readAsDataURL(file)
+  }
+
+  const handleLogoDragStart = (e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    const container = (e.currentTarget as HTMLElement).parentElement
+    if (!container) return
+    const rect = container.getBoundingClientRect()
+    logoDragRef.current = {
+      startMouseX: e.clientX,
+      startMouseY: e.clientY,
+      startPosX: logoPosition.x,
+      startPosY: logoPosition.y,
+    }
+    const onMouseMove = (ev: MouseEvent) => {
+      if (!logoDragRef.current) return
+      const dx = ((ev.clientX - logoDragRef.current.startMouseX) / rect.width) * 100
+      const dy = ((ev.clientY - logoDragRef.current.startMouseY) / rect.height) * 100
+      setLogoPosition({
+        x: Math.max(0, Math.min(100 - logoScale, logoDragRef.current.startPosX + dx)),
+        y: Math.max(0, Math.min(100, logoDragRef.current.startPosY + dy)),
+      })
+    }
+    const onMouseUp = () => {
+      logoDragRef.current = null
+      window.removeEventListener("mousemove", onMouseMove)
+      window.removeEventListener("mouseup", onMouseUp)
+    }
+    window.addEventListener("mousemove", onMouseMove)
+    window.addEventListener("mouseup", onMouseUp)
   }
 
   const applyLogoToPage = (pageIndex: number): Promise<void> => {
@@ -996,15 +1066,9 @@ export default function ConvertPage() {
 
           const logoW = (logoScale / 100) * canvas.width
           const logoH = logoW * (logoImg.naturalHeight / logoImg.naturalWidth)
-          const m = (logoMargin / 100) * canvas.width
 
-          let x = 0, y = 0
-          switch (logoPosition) {
-            case "top-left":     x = m;                        y = m; break
-            case "top-right":    x = canvas.width - logoW - m; y = m; break
-            case "bottom-left":  x = m;                        y = canvas.height - logoH - m; break
-            case "bottom-right": x = canvas.width - logoW - m; y = canvas.height - logoH - m; break
-          }
+          const x = (logoPosition.x / 100) * canvas.width
+          const y = (logoPosition.y / 100) * canvas.height
 
           ctx.globalAlpha = logoOpacity / 100
           ctx.drawImage(logoImg, x, y, logoW, logoH)
@@ -1034,14 +1098,17 @@ export default function ConvertPage() {
     if (!logoImage || editProcessing || editPages.length === 0) return
     setEditProcessing(true)
     setError("")
+    setProgressInfo({ label: "로고 적용 중", percent: 0 })
     for (let i = 0; i < editPages.length; i++) {
       setEditCurrentPage(i)
       setEditStatusText(`로고 적용 중... (${i + 1}/${editPages.length})`)
+      setProgressInfo({ label: "로고 적용 중", percent: Math.round(((i + 1) / editPages.length) * 100) })
       pushUndoSnapshot(i)
       await applyLogoToPage(i)
     }
     setEditProcessing(false)
     setEditStatusText("")
+    setProgressInfo(null)
   }
 
   // --- Direct editing functions ---
@@ -1152,24 +1219,49 @@ export default function ConvertPage() {
   }
 
   const downloadEditedPdf = async () => {
-    if (!editOriginalBytes) return
+    if (editPages.length === 0) return
     setEditStatusText("PDF 생성 중...")
+    setProgressInfo({ label: "PDF 저장 중", percent: 0 })
     try {
-      const pdfDoc = await PDFDocument.load(editOriginalBytes)
-      for (const page of editPages) {
-        if (page.editedImageBase64) {
-          const imageBytes = Uint8Array.from(atob(page.editedImageBase64), (c) => c.charCodeAt(0))
-          const mimeType = page.editedImageBase64.startsWith("/9j") ? "jpeg" : "png"
-          const image = mimeType === "jpeg" ? await pdfDoc.embedJpg(imageBytes) : await pdfDoc.embedPng(imageBytes)
-          const pdfPage = pdfDoc.getPage(page.pageNumber - 1)
-          const { width, height } = pdfPage.getSize()
-          pdfPage.drawImage(image, { x: 0, y: 0, width, height })
+      let pdfBytes: Uint8Array
+      if (editOriginalBytes) {
+        const pdfDoc = await PDFDocument.load(new Uint8Array(editOriginalBytes))
+        const editedPages = editPages.filter((p) => p.editedImageBase64)
+        let editIdx = 0
+        for (const page of editPages) {
+          if (page.editedImageBase64) {
+            editIdx++
+            setProgressInfo({ label: "PDF 저장 중", percent: Math.round((editIdx / editedPages.length) * 90) })
+            const imageBytes = Uint8Array.from(atob(page.editedImageBase64), (c) => c.charCodeAt(0))
+            const mimeType = page.editedImageBase64.startsWith("/9j") ? "jpeg" : "png"
+            const image = mimeType === "jpeg" ? await pdfDoc.embedJpg(imageBytes) : await pdfDoc.embedPng(imageBytes)
+            const pdfPage = pdfDoc.getPage(page.pageNumber - 1)
+            const { width, height } = pdfPage.getSize()
+            pdfPage.drawImage(image, { x: 0, y: 0, width, height })
+          }
         }
+        pdfBytes = await pdfDoc.save()
+      } else {
+        const pdfDoc = await PDFDocument.create()
+        for (let di = 0; di < editPages.length; di++) {
+          const page = editPages[di]
+          setProgressInfo({ label: "PDF 저장 중", percent: Math.round(((di + 1) / editPages.length) * 90) })
+          const imgSrc = page.editedImageBase64 || page.originalImageBase64
+          const isJpeg = imgSrc.startsWith("/9j")
+          const res = await fetch(`data:image/${isJpeg ? "jpeg" : "png"};base64,${imgSrc}`)
+          const imageBytes = new Uint8Array(await res.arrayBuffer())
+          const image = isJpeg ? await pdfDoc.embedJpg(imageBytes) : await pdfDoc.embedPng(imageBytes)
+          const pageW = page.width / 2
+          const pageH = page.height / 2
+          const pdfPage = pdfDoc.addPage([pageW, pageH])
+          pdfPage.drawImage(image, { x: 0, y: 0, width: pageW, height: pageH })
+        }
+        pdfBytes = await pdfDoc.save()
       }
-      const pdfBytes = await pdfDoc.save()
-      const blob = new Blob([pdfBytes.buffer as ArrayBuffer], { type: "application/pdf" })
+      setProgressInfo({ label: "다운로드 중", percent: 100 })
+      const blob = new Blob([new Uint8Array(pdfBytes)], { type: "application/pdf" })
       const link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = `edited_${editFileName}`; link.click()
-    } catch { setError("PDF 저장에 실패했습니다.") } finally { setEditStatusText("") }
+    } catch { setError("PDF 저장에 실패했습니다.") } finally { setEditStatusText(""); setProgressInfo(null) }
   }
 
   const editPageData = editPages[editCurrentPage]
@@ -1278,25 +1370,24 @@ export default function ConvertPage() {
           </Link>
           <div className="flex items-center gap-3">
             {isAiEdit && hasEdits && (
-              <>
-                <button
-                  onClick={downloadEditedPdf}
-                  className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-semibold rounded-lg transition-all duration-300 hover:shadow-lg hover:shadow-indigo-500/25"
-                >
-                  <Download className="w-4 h-4" />
-                  PDF 다운로드
-                </button>
-                {authUser && (
-                  <button
-                    onClick={uploadPdfToCloud}
-                    disabled={cloudUploading}
-                    className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-sm font-semibold rounded-lg transition-all duration-300 hover:shadow-lg hover:shadow-emerald-500/25"
-                  >
-                    {cloudUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <CloudUpload className="w-4 h-4" />}
-                    클라우드 저장
-                  </button>
-                )}
-              </>
+              <button
+                onClick={downloadEditedPdf}
+                className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-semibold rounded-lg transition-all duration-300 hover:shadow-lg hover:shadow-indigo-500/25"
+              >
+                <Download className="w-4 h-4" />
+                PDF 다운로드
+              </button>
+            )}
+            {isAiEdit && authUser && editPages.length > 0 && (
+              <button
+                onClick={uploadPdfToCloud}
+                disabled={cloudUploading}
+                title="클라우드에 저장"
+                className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-semibold rounded-lg transition-all duration-300 hover:shadow-lg hover:shadow-emerald-500/25"
+              >
+                {cloudUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <CloudUpload className="w-4 h-4" />}
+                클라우드 저장
+              </button>
             )}
             {authUser && (
               <button
@@ -1683,6 +1774,22 @@ export default function ConvertPage() {
                             </button>
                           </div>
                         )}
+                        {/* Logo preview overlay */}
+                        {logoImage && (
+                          <img
+                            src={`data:image/png;base64,${logoImage}`}
+                            alt="logo preview"
+                            draggable={false}
+                            onMouseDown={handleLogoDragStart}
+                            className="absolute z-20 cursor-grab active:cursor-grabbing rounded-sm ring-2 ring-transparent hover:ring-indigo-400/60 transition-shadow"
+                            style={{
+                              left: `${logoPosition.x}%`,
+                              top: `${logoPosition.y}%`,
+                              width: `${logoScale}%`,
+                              opacity: logoOpacity / 100,
+                            }}
+                          />
+                        )}
                       </div>
                     </div>
                   )}
@@ -1744,6 +1851,22 @@ export default function ConvertPage() {
                               <RotateCcw className="w-3.5 h-3.5 text-gray-300" />
                             </button>
                           </div>
+                        )}
+                        {/* Logo preview overlay */}
+                        {logoImage && (
+                          <img
+                            src={`data:image/png;base64,${logoImage}`}
+                            alt="logo preview"
+                            draggable={false}
+                            onMouseDown={handleLogoDragStart}
+                            className="absolute z-20 cursor-grab active:cursor-grabbing rounded-sm ring-2 ring-transparent hover:ring-emerald-400/60 transition-shadow"
+                            style={{
+                              left: `${logoPosition.x}%`,
+                              top: `${logoPosition.y}%`,
+                              width: `${logoScale}%`,
+                              opacity: logoOpacity / 100,
+                            }}
+                          />
                         )}
                       </div>
                     </div>
@@ -1808,30 +1931,26 @@ export default function ConvertPage() {
                             <div className="flex items-center gap-3 ml-7">
                               <span className="text-xs text-gray-500 flex-shrink-0 w-8">위치</span>
                               {([
-                                { pos: "top-left" as const, label: "↖ 좌상" },
-                                { pos: "top-right" as const, label: "↗ 우상" },
-                                { pos: "bottom-left" as const, label: "↙ 좌하" },
-                                { pos: "bottom-right" as const, label: "↘ 우하" },
-                              ]).map(({ pos, label }) => (
+                                { label: "↖ 좌상", x: logoMargin, y: logoMargin },
+                                { label: "↗ 우상", x: 100 - logoScale - logoMargin, y: logoMargin },
+                                { label: "↙ 좌하", x: logoMargin, y: 100 - logoScale * logoNaturalRatio * (editPageData ? editPageData.width / editPageData.height : 1) - logoMargin },
+                                { label: "↘ 우하", x: 100 - logoScale - logoMargin, y: 100 - logoScale * logoNaturalRatio * (editPageData ? editPageData.width / editPageData.height : 1) - logoMargin },
+                              ]).map(({ label, x, y }) => (
                                 <button
-                                  key={pos}
-                                  onClick={() => setLogoPosition(pos)}
-                                  className={`px-2 py-1 text-xs rounded-md transition-all ${logoPosition === pos ? "bg-indigo-600 text-white" : "text-gray-400 border border-gray-800 hover:border-gray-600 hover:text-white"}`}
+                                  key={label}
+                                  onClick={() => setLogoPosition({ x, y })}
+                                  className="px-2 py-1 text-xs rounded-md transition-all text-gray-400 border border-gray-800 hover:border-gray-600 hover:text-white"
                                 >
                                   {label}
                                 </button>
                               ))}
+                              <span className="text-xs text-gray-600 ml-1">| 드래그로 자유 배치</span>
                             </div>
                             <div className="flex items-center gap-4 ml-7">
                               <div className="flex items-center gap-2">
                                 <span className="text-xs text-gray-500">크기</span>
                                 <input type="range" min="3" max="30" value={logoScale} onChange={(e) => setLogoScale(Number(e.target.value))} className="w-16 accent-indigo-500" />
                                 <span className="text-xs text-gray-400 w-8">{logoScale}%</span>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <span className="text-xs text-gray-500">여백</span>
-                                <input type="range" min="0" max="10" value={logoMargin} onChange={(e) => setLogoMargin(Number(e.target.value))} className="w-16 accent-indigo-500" />
-                                <span className="text-xs text-gray-400 w-8">{logoMargin}%</span>
                               </div>
                               <div className="flex items-center gap-2">
                                 <span className="text-xs text-gray-500">투명도</span>
@@ -1955,6 +2074,40 @@ export default function ConvertPage() {
           )}
         </main>
       </div>
+      {/* Floating Progress Bar */}
+      {progressInfo && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 w-full max-w-sm px-4">
+          <div className="bg-gray-900/95 backdrop-blur-md border border-gray-700/60 rounded-2xl shadow-2xl shadow-black/40 px-5 py-4 space-y-2.5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <Loader2 className={`w-4 h-4 text-indigo-400 ${progressInfo.percent < 100 ? "animate-spin" : "hidden"}`} />
+                {progressInfo.percent >= 100 && <CheckCircle className="w-4 h-4 text-emerald-400" />}
+                <span className="text-sm font-medium text-gray-200">{progressInfo.label}</span>
+              </div>
+              <span className="text-xs font-mono text-gray-400">{progressInfo.percent}%</span>
+            </div>
+            <div className="h-1.5 bg-gray-800 rounded-full overflow-hidden">
+              <div
+                className="h-full rounded-full transition-all duration-500 ease-out"
+                style={{
+                  width: `${progressInfo.percent}%`,
+                  background: progressInfo.percent >= 100
+                    ? "linear-gradient(90deg, #34d399, #10b981)"
+                    : "linear-gradient(90deg, #818cf8, #a78bfa, #818cf8)",
+                  backgroundSize: progressInfo.percent < 100 ? "200% 100%" : undefined,
+                  animation: progressInfo.percent < 100 ? "shimmer 2s linear infinite" : undefined,
+                }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+      <style jsx>{`
+        @keyframes shimmer {
+          0% { background-position: 200% 0; }
+          100% { background-position: -200% 0; }
+        }
+      `}</style>
     </div>
   )
 }

@@ -41,7 +41,7 @@ export default function EditPage() {
   const [error, setError] = useState("")
   const [isDragging, setIsDragging] = useState(false)
   const [fileName, setFileName] = useState("")
-  const [originalPdfBytes, setOriginalPdfBytes] = useState<ArrayBuffer | null>(null)
+  const [originalPdfBytes, setOriginalPdfBytes] = useState<Uint8Array | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const promptInputRef = useRef<HTMLTextAreaElement>(null)
 
@@ -57,7 +57,7 @@ export default function EditPage() {
     setStatusText("PDF 페이지 렌더링 중...")
     try {
       const loadingTask = pdfjs.getDocument({
-        data: arrayBuffer,
+        data: new Uint8Array(arrayBuffer),
         cMapUrl: `https://cdn.jsdelivr.net/npm/pdfjs-dist@${PDFJS_VERSION}/cmaps/`,
         cMapPacked: true,
       })
@@ -105,7 +105,7 @@ export default function EditPage() {
     setError("")
     setFileName(file.name)
     const arrayBuffer = await file.arrayBuffer()
-    setOriginalPdfBytes(arrayBuffer)
+    setOriginalPdfBytes(new Uint8Array(arrayBuffer.slice(0)))
     await renderPdfPages(arrayBuffer)
   }
 
@@ -168,7 +168,7 @@ export default function EditPage() {
     setStatusText("PDF 생성 중...")
 
     try {
-      const pdfDoc = await PDFDocument.load(originalPdfBytes)
+      const pdfDoc = await PDFDocument.load(new Uint8Array(originalPdfBytes))
 
       for (const page of pages) {
         if (page.editedImageBase64) {
@@ -193,7 +193,7 @@ export default function EditPage() {
       }
 
       const pdfBytes = await pdfDoc.save()
-      const blob = new Blob([pdfBytes.buffer as ArrayBuffer], { type: "application/pdf" })
+      const blob = new Blob([new Uint8Array(pdfBytes)], { type: "application/pdf" })
       const link = document.createElement("a")
       link.href = URL.createObjectURL(blob)
       link.download = `edited_${fileName}`
