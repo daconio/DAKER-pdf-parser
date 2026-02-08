@@ -44,6 +44,11 @@ import {
   PanelLeft,
   Circle,
   Mail,
+  Undo2,
+  Redo2,
+  MousePointer2,
+  Scissors,
+  Hash,
 } from "lucide-react"
 import JSZip from "jszip"
 import * as pdfjsLib from "pdfjs-dist"
@@ -69,8 +74,10 @@ import { getSupabase } from "@/lib/supabase"
 import { saveEditSession, loadEditSession, deleteEditSession } from "@/lib/idb"
 import { useCollaboration } from "@/hooks/useCollaboration"
 import { useEmail } from "@/hooks/useEmail"
+import { useImageStorage } from "@/hooks/useImageStorage"
 import { CollaborationPanel } from "@/components/ui/CollaborationPanel"
 import { EmailPanel } from "@/components/ui/EmailPanel"
+import { ImagePanel } from "@/components/ui/ImagePanel"
 import type { User as SupabaseUser } from "@supabase/supabase-js"
 
 const pdfjs: any = (pdfjsLib as any).default || pdfjsLib
@@ -81,7 +88,7 @@ if (typeof window !== "undefined" && pdfjs.GlobalWorkerOptions) {
 }
 
 type EditSubMode = "ai" | "direct"
-type DirectTool = "text" | "draw" | "rect" | "eraser"
+type DirectTool = "text" | "draw" | "rect" | "eraser" | "select"
 
 const MODES: { id: AppMode; label: string; emoji: string; accept: string; desc: string }[] = [
   { id: AI_EDIT, label: "AI PDF 수정", emoji: "✨", accept: ".pdf", desc: "AI로 PDF 텍스트를 자연어로 수정" },
@@ -107,6 +114,16 @@ interface TextItemData {
   width: number
   height: number
 }
+
+// Direct mode text fonts
+const DIRECT_FONTS = [
+  { value: "Pretendard Variable", label: "프리텐다드" },
+  { value: "Arial", label: "Arial" },
+  { value: "Times New Roman", label: "Times" },
+  { value: "Georgia", label: "Georgia" },
+  { value: "Courier New", label: "Courier" },
+  { value: "Verdana", label: "Verdana" },
+]
 
 interface EditPageData {
   pageNumber: number
@@ -138,6 +155,7 @@ export default function ConvertPage() {
   const [editLoading, setEditLoading] = useState(false)
   const [editStatusText, setEditStatusText] = useState("")
   const [progressInfo, setProgressInfo] = useState<{ label: string; percent: number } | null>(null)
+  const abortControllerRef = useRef<AbortController | null>(null)
   const [editFileName, setEditFileName] = useState("")
   const [editOriginalBytes, setEditOriginalBytes] = useState<Uint8Array | null>(null)
   const editFileInputRef = useRef<HTMLInputElement>(null)
@@ -171,13 +189,34 @@ export default function ConvertPage() {
   const [directTextInput, setDirectTextInput] = useState<{ x: number; y: number } | null>(null)
   const [directTextValue, setDirectTextValue] = useState("")
   const [directTextSize, setDirectTextSize] = useState(24)
+  const [directTextFontFamily, setDirectTextFontFamily] = useState("Pretendard Variable")
+  const [directTextCursorVisible, setDirectTextCursorVisible] = useState(true)
+  const directTextSnapshotRef = useRef<ImageData | null>(null) // Snapshot before text input
+  const hiddenTextInputRef = useRef<HTMLInputElement>(null) // Hidden input for IME support
+  const [isComposing, setIsComposing] = useState(false) // Track IME composition state
+  // Text objects storage for re-editing
+  type TextObject = { x: number; y: number; text: string; size: number; font: string; color: string }
+  const textObjectsRef = useRef<Map<number, TextObject[]>>(new Map()) // per-page text objects
+  const baseCanvasDataRef = useRef<Map<number, string>>(new Map()) // per-page base canvas (without texts)
+  const [editingTextIndex, setEditingTextIndex] = useState<number | null>(null) // index of text being edited
+  // Text dragging state
+  const [draggingTextIndex, setDraggingTextIndex] = useState<number | null>(null)
+  const dragStartPosRef = useRef<{ x: number; y: number } | null>(null)
+  const dragOriginalTextPosRef = useRef<{ x: number; y: number } | null>(null)
+  const isDragMovedRef = useRef(false) // Track if mouse moved during drag
   const [directRectStart, setDirectRectStart] = useState<{ x: number; y: number } | null>(null)
   const canvasSnapshotRef = useRef<ImageData | null>(null)
   const [canvasInitTrigger, setCanvasInitTrigger] = useState(0)
+  // Selection tool state
+  const [selectionStart, setSelectionStart] = useState<{ x: number; y: number } | null>(null)
+  const [selectionRect, setSelectionRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
+  const selectionClipboardRef = useRef<ImageData | null>(null)
+  const [undoCount, setUndoCount] = useState(0) // Trigger re-render on undo history change
   const isConfirmingRef = useRef(false)
 
-  // Undo history: per-page stack of previous image states
+  // Undo/Redo history: per-page stack of previous/future image states
   const undoHistoryRef = useRef<Map<number, string[]>>(new Map())
+  const redoHistoryRef = useRef<Map<number, string[]>>(new Map())
 
   // Logo overlay state
   const [logoImage, setLogoImage] = useState<string | null>(null)
@@ -189,6 +228,20 @@ export default function ConvertPage() {
   const [logoNaturalRatio, setLogoNaturalRatio] = useState(1) // height / width
   const logoInputRef = useRef<HTMLInputElement>(null)
   const logoDragRef = useRef<{ startMouseX: number; startMouseY: number; startPosX: number; startPosY: number } | null>(null)
+
+  // Page numbering state
+  type PageNumberPosition = "bottom-center" | "bottom-left" | "bottom-right" | "top-center" | "top-left" | "top-right"
+  const [pageNumberEnabled, setPageNumberEnabled] = useState(false)
+  const [pageNumberPosition, setPageNumberPosition] = useState<PageNumberPosition>("bottom-center")
+  const [pageNumberStartFrom, setPageNumberStartFrom] = useState(2) // 1 = first page, 2 = second page (skip cover)
+  const [pageNumberFontSize, setPageNumberFontSize] = useState(14)
+  const [showPageNumberPanel, setShowPageNumberPanel] = useState(false)
+  // Store base images before page numbers are applied (to allow re-applying without stacking)
+  const pageNumberBaseImagesRef = useRef<Map<number, string>>(new Map())
+
+  // Page drag-and-drop reorder state
+  const [pageDragIndex, setPageDragIndex] = useState<number | null>(null)
+  const [pageDragOverIndex, setPageDragOverIndex] = useState<number | null>(null)
 
   // Additional PDF upload ref
   const addPdfInputRef = useRef<HTMLInputElement>(null)
@@ -237,14 +290,21 @@ export default function ConvertPage() {
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined)
 
   // Access token helper (defined early for hooks)
-  const getAccessToken = async () => {
+  const getAccessToken = useCallback(async () => {
     const { data: { session } } = await getSupabase().auth.getSession()
     return session?.access_token || null
-  }
+  }, [])
 
   // Email hook and state
   const [showEmailPanel, setShowEmailPanel] = useState(false)
   const email = useEmail({
+    user: authUser,
+    getAccessToken,
+  })
+
+  // Image storage hook and state
+  const [showImagePanel, setShowImagePanel] = useState(false)
+  const imageStorage = useImageStorage({
     user: authUser,
     getAccessToken,
   })
@@ -317,9 +377,25 @@ export default function ConvertPage() {
       setTempSaveStatus("saved")
       // Reset to idle after 2 seconds
       setTimeout(() => setTempSaveStatus("idle"), 2000)
-    }, 2000)
+    }, 1000) // Reduced from 2000ms to 1000ms for faster auto-save
     return () => { if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current) }
   }, [editPages, editCurrentPage, editFileName])
+
+  // Immediate save function for critical operations (AI edit, etc.)
+  const saveImmediately = useCallback(async (pages: EditPageData[]) => {
+    if (pages.length === 0) return
+    setTempSaveStatus("saving")
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current)
+    const stripped = pages.map(({ textItems: _t, ...rest }) => rest)
+    await saveEditSession({
+      editPages: stripped,
+      editFileName: editFileName,
+      editCurrentPage: editCurrentPage,
+      timestamp: Date.now(),
+    })
+    setTempSaveStatus("saved")
+    setTimeout(() => setTempSaveStatus("idle"), 2000)
+  }, [editFileName, editCurrentPage])
 
   // Paste from clipboard (images)
   const handlePasteFromClipboard = useCallback(async (e: ClipboardEvent) => {
@@ -435,6 +511,18 @@ export default function ConvertPage() {
         return
       }
 
+      // Redo: Cmd+Shift+Z (Mac) / Ctrl+Shift+Z or Ctrl+Y (Windows)
+      if ((e.key === "z" && (e.metaKey || e.ctrlKey) && e.shiftKey) || (e.key === "y" && e.ctrlKey)) {
+        if (!isAiEdit || editPages.length === 0 || editLoading || editProcessing) return
+        e.preventDefault()
+        if (editSubMode === "direct" && drawCanvasRef.current) {
+          const b64 = drawCanvasRef.current.toDataURL("image/png").split(",")[1]
+          setEditPages((prev) => prev.map((p, i) => i === editCurrentPage ? { ...p, editedImageBase64: b64 } : p))
+        }
+        performRedo()
+        return
+      }
+
       // Copy: Cmd+C / Ctrl+C (copy current page)
       if (e.key === "c" && (e.metaKey || e.ctrlKey) && !e.shiftKey) {
         if (!isAiEdit || editPages.length === 0 || editLoading) return
@@ -460,11 +548,29 @@ export default function ConvertPage() {
       if (tag === "INPUT" || tag === "TEXTAREA") return
       if (!isAiEdit || editPages.length === 0 || editLoading) return
 
-      // Close context menu on Escape
-      if (e.key === "Escape" && contextMenu) {
-        closeContextMenu()
-        e.preventDefault()
-        return
+      // Close context menu or page number panel on Escape
+      if (e.key === "Escape") {
+        if (contextMenu) {
+          closeContextMenu()
+          e.preventDefault()
+          return
+        }
+        if (showPageNumberPanel) {
+          setShowPageNumberPanel(false)
+          e.preventDefault()
+          return
+        }
+        // Cancel ongoing operation (download, etc.)
+        if (progressInfo && abortControllerRef.current) {
+          abortControllerRef.current.abort()
+          abortControllerRef.current = null
+          setProgressInfo(null)
+          setEditStatusText("취소됨")
+          setSaveAnimation("idle")
+          setTimeout(() => setEditStatusText(""), 1500)
+          e.preventDefault()
+          return
+        }
       }
 
       switch (e.key) {
@@ -581,6 +687,11 @@ export default function ConvertPage() {
     setDirectTextSize(24)
     setDirectRectStart(null)
     undoHistoryRef.current.clear()
+    redoHistoryRef.current.clear()
+    textObjectsRef.current.clear()
+    baseCanvasDataRef.current.clear()
+    setEditingTextIndex(null)
+    setDraggingTextIndex(null)
     setLogoImage(null)
     setLogoFileName("")
     setLogoPosition({ x: 87, y: 87 })
@@ -772,6 +883,9 @@ export default function ConvertPage() {
       history.splice(0, history.length - MAX_UNDO_HISTORY)
     }
     undoHistoryRef.current.set(pageIndex, history)
+    // Clear redo history on new edit action
+    redoHistoryRef.current.set(pageIndex, [])
+    setUndoCount((c) => c + 1) // Trigger re-render to update undo/redo button state
   }
 
   // --- Page CRUD helpers ---
@@ -783,23 +897,63 @@ export default function ConvertPage() {
   }
 
   const rebuildUndoHistory = (oldToNewIndexMap: Map<number, number>) => {
-    const oldHistory = undoHistoryRef.current
-    const newHistory = new Map<number, string[]>()
+    // Rebuild undo history
+    const oldUndoHistory = undoHistoryRef.current
+    const newUndoHistory = new Map<number, string[]>()
     for (const [oldIdx, newIdx] of oldToNewIndexMap.entries()) {
-      const hist = oldHistory.get(oldIdx)
+      const hist = oldUndoHistory.get(oldIdx)
       if (hist && hist.length > 0) {
-        newHistory.set(newIdx, [...hist])
+        newUndoHistory.set(newIdx, [...hist])
       }
     }
-    undoHistoryRef.current = newHistory
+    undoHistoryRef.current = newUndoHistory
+
+    // Rebuild redo history
+    const oldRedoHistory = redoHistoryRef.current
+    const newRedoHistory = new Map<number, string[]>()
+    for (const [oldIdx, newIdx] of oldToNewIndexMap.entries()) {
+      const hist = oldRedoHistory.get(oldIdx)
+      if (hist && hist.length > 0) {
+        newRedoHistory.set(newIdx, [...hist])
+      }
+    }
+    redoHistoryRef.current = newRedoHistory
   }
 
   const performUndo = () => {
     const history = undoHistoryRef.current.get(editCurrentPage)
     if (!history || history.length === 0) return
+    // Save current state to redo history before restoring
+    const currentPage = editPages[editCurrentPage]
+    if (currentPage) {
+      const redoHistory = redoHistoryRef.current.get(editCurrentPage) || []
+      redoHistory.push(currentPage.editedImageBase64 || "")
+      redoHistoryRef.current.set(editCurrentPage, redoHistory)
+    }
     const previousState = history.pop()!
     undoHistoryRef.current.set(editCurrentPage, history)
+    setUndoCount((c) => c + 1) // Trigger re-render to update undo/redo button state
     const restoredValue = previousState === "" ? null : previousState
+    setEditPages((prev) => prev.map((p, i) => i === editCurrentPage ? { ...p, editedImageBase64: restoredValue } : p))
+    if (editSubMode === "direct") {
+      setTimeout(() => setCanvasInitTrigger((c) => c + 1), 50)
+    }
+  }
+
+  const performRedo = () => {
+    const redoHistory = redoHistoryRef.current.get(editCurrentPage)
+    if (!redoHistory || redoHistory.length === 0) return
+    // Save current state to undo history before redoing
+    const currentPage = editPages[editCurrentPage]
+    if (currentPage) {
+      const undoHistory = undoHistoryRef.current.get(editCurrentPage) || []
+      undoHistory.push(currentPage.editedImageBase64 || "")
+      undoHistoryRef.current.set(editCurrentPage, undoHistory)
+    }
+    const nextState = redoHistory.pop()!
+    redoHistoryRef.current.set(editCurrentPage, redoHistory)
+    setUndoCount((c) => c + 1) // Trigger re-render to update undo/redo button state
+    const restoredValue = nextState === "" ? null : nextState
     setEditPages((prev) => prev.map((p, i) => i === editCurrentPage ? { ...p, editedImageBase64: restoredValue } : p))
     if (editSubMode === "direct") {
       setTimeout(() => setCanvasInitTrigger((c) => c + 1), 50)
@@ -1006,6 +1160,11 @@ export default function ConvertPage() {
       const totalPages = pdf.numPages
       const newPagesData: EditPageData[] = []
 
+      // Get reference dimensions from first page
+      const refPage = editPages[0]
+      const targetWidth = refPage?.width
+      const targetHeight = refPage?.height
+
       for (let i = 1; i <= totalPages; i++) {
         setEditStatusText(`페이지 추가 중... (${i}/${totalPages})`)
         setProgressInfo({ label: "PDF 추가 중", percent: Math.round((i / totalPages) * 100) })
@@ -1019,12 +1178,36 @@ export default function ConvertPage() {
         ctx.fillRect(0, 0, canvas.width, canvas.height)
         await page.render({ canvasContext: ctx, viewport }).promise
 
+        let finalBase64 = canvas.toDataURL("image/png").split(",")[1]
+        let finalWidth = viewport.width
+        let finalHeight = viewport.height
+
+        // Normalize to match first page dimensions if they exist
+        if (targetWidth && targetHeight && (viewport.width !== targetWidth || viewport.height !== targetHeight)) {
+          const normalizedCanvas = document.createElement("canvas")
+          normalizedCanvas.width = targetWidth
+          normalizedCanvas.height = targetHeight
+          const normalizedCtx = normalizedCanvas.getContext("2d")!
+          normalizedCtx.fillStyle = "#FFFFFF"
+          normalizedCtx.fillRect(0, 0, targetWidth, targetHeight)
+          // Scale to fit while maintaining aspect ratio
+          const scale = Math.min(targetWidth / viewport.width, targetHeight / viewport.height)
+          const scaledW = viewport.width * scale
+          const scaledH = viewport.height * scale
+          const offsetX = (targetWidth - scaledW) / 2
+          const offsetY = (targetHeight - scaledH) / 2
+          normalizedCtx.drawImage(canvas, offsetX, offsetY, scaledW, scaledH)
+          finalBase64 = normalizedCanvas.toDataURL("image/png").split(",")[1]
+          finalWidth = targetWidth
+          finalHeight = targetHeight
+        }
+
         newPagesData.push({
           pageNumber: 0, // Will be reindexed
-          originalImageBase64: canvas.toDataURL("image/png").split(",")[1],
+          originalImageBase64: finalBase64,
           editedImageBase64: null,
-          width: viewport.width,
-          height: viewport.height,
+          width: finalWidth,
+          height: finalHeight,
           textItems: [],
         })
       }
@@ -1059,7 +1242,10 @@ export default function ConvertPage() {
       const data = await res.json()
       if (!res.ok) { setError(data.error || "수정에 실패했습니다."); setSaveAnimation("error"); setTimeout(() => setSaveAnimation("idle"), 2000); return }
       pushUndoSnapshot(editCurrentPage)
-      setEditPages((prev) => prev.map((p, i) => i === editCurrentPage ? { ...p, editedImageBase64: data.editedImageBase64 } : p))
+      const updatedPages = editPages.map((p, i) => i === editCurrentPage ? { ...p, editedImageBase64: data.editedImageBase64 } : p)
+      setEditPages(updatedPages)
+      // Immediately save after AI edit
+      saveImmediately(updatedPages)
       setEditPrompt(""); setEditStatusText("")
       setSaveAnimation("success"); setTimeout(() => setSaveAnimation("idle"), 1500)
     } catch { setError("서버 연결에 실패했습니다."); setSaveAnimation("error"); setTimeout(() => setSaveAnimation("idle"), 2000) } finally { setEditProcessing(false); setEditStatusText("") }
@@ -1115,12 +1301,43 @@ export default function ConvertPage() {
     const ctx = canvas.getContext("2d")!
     ctx.fillStyle = "#FFFFFF"
     ctx.fillRect(0, 0, width, height)
+
+    // Auto-apply logo if set (Logo Consistency Feature)
+    let editedBase64: string | null = null
+    if (logoImage) {
+      const logoImg = new window.Image()
+      logoImg.onload = () => {
+        const logoW = (logoScale / 100) * canvas.width
+        const logoH = logoW * (logoImg.naturalHeight / logoImg.naturalWidth)
+        const x = (logoPosition.x / 100) * canvas.width
+        const y = (logoPosition.y / 100) * canvas.height
+        ctx.globalAlpha = logoOpacity / 100
+        ctx.drawImage(logoImg, x, y, logoW, logoH)
+        ctx.globalAlpha = 1
+        const withLogoBase64 = canvas.toDataURL("image/png").split(",")[1]
+
+        // Update the page with logo applied
+        setEditPages((prev) => {
+          const updated = [...prev]
+          const pageIndex = afterIndex + 1
+          if (updated[pageIndex]) {
+            updated[pageIndex] = { ...updated[pageIndex], editedImageBase64: withLogoBase64 }
+          }
+          return updated
+        })
+        if (editSubMode === "direct") {
+          setTimeout(() => setCanvasInitTrigger((c) => c + 1), 100)
+        }
+      }
+      logoImg.src = `data:image/png;base64,${logoImage}`
+    }
+
     const blankBase64 = canvas.toDataURL("image/png").split(",")[1]
 
     const newPage: EditPageData = {
       pageNumber: 0,
       originalImageBase64: blankBase64,
-      editedImageBase64: null,
+      editedImageBase64: editedBase64,
       width,
       height,
       textItems: [],
@@ -1138,7 +1355,7 @@ export default function ConvertPage() {
     setEditPages(reindexPages(newPages))
     setEditCurrentPage(afterIndex + 1)
     invalidateOriginalBytes()
-    if (editSubMode === "direct") {
+    if (editSubMode === "direct" && !logoImage) {
       setTimeout(() => setCanvasInitTrigger((c) => c + 1), 50)
     }
   }
@@ -1180,11 +1397,10 @@ export default function ConvertPage() {
   }
 
   // Paste page from clipboard
-  const pastePage = (afterIndex: number) => {
+  const pastePage = async (afterIndex: number) => {
     if (!copiedPage) return
     if (editSubMode === "direct") saveDirectCanvas()
 
-    let newPage: EditPageData
     if (copiedPage.isStyleOnly) {
       // Style only: apply to current page
       const currentPage = editPages[afterIndex]
@@ -1196,9 +1412,41 @@ export default function ConvertPage() {
       return
     }
 
-    newPage = {
+    // Normalize page size to match the first page (for consistent display)
+    const refPage = editPages[0]
+    const targetWidth = refPage?.width || copiedPage.data.width
+    const targetHeight = refPage?.height || copiedPage.data.height
+    let finalImageBase64 = copiedPage.data.editedImageBase64 || copiedPage.data.originalImageBase64
+
+    // If dimensions differ, resize the image to match
+    if (copiedPage.data.width !== targetWidth || copiedPage.data.height !== targetHeight) {
+      const img = new window.Image()
+      img.src = `data:image/png;base64,${finalImageBase64}`
+      await new Promise((resolve) => { img.onload = resolve })
+
+      const canvas = document.createElement("canvas")
+      canvas.width = targetWidth
+      canvas.height = targetHeight
+      const ctx = canvas.getContext("2d")!
+      ctx.fillStyle = "#FFFFFF"
+      ctx.fillRect(0, 0, targetWidth, targetHeight)
+      // Draw image centered and scaled to fit
+      const scale = Math.min(targetWidth / img.naturalWidth, targetHeight / img.naturalHeight)
+      const scaledW = img.naturalWidth * scale
+      const scaledH = img.naturalHeight * scale
+      const offsetX = (targetWidth - scaledW) / 2
+      const offsetY = (targetHeight - scaledH) / 2
+      ctx.drawImage(img, offsetX, offsetY, scaledW, scaledH)
+      finalImageBase64 = canvas.toDataURL("image/png").split(",")[1]
+    }
+
+    const newPage: EditPageData = {
       ...copiedPage.data,
       pageNumber: 0,
+      originalImageBase64: finalImageBase64,
+      editedImageBase64: null,
+      width: targetWidth,
+      height: targetHeight,
       textItems: [],
     }
 
@@ -1286,6 +1534,258 @@ export default function ConvertPage() {
     setEditPages(reindexPages(newPages))
     setEditCurrentPage(toIndex)
     invalidateOriginalBytes()
+    if (editSubMode === "direct") {
+      setTimeout(() => setCanvasInitTrigger((c) => c + 1), 50)
+    }
+  }
+
+  // Page drag-and-drop reorder functions
+  const handlePageDragStart = (e: React.DragEvent, index: number) => {
+    if (lockedPages.has(index)) {
+      e.preventDefault()
+      return
+    }
+    setPageDragIndex(index)
+    e.dataTransfer.effectAllowed = "move"
+    e.dataTransfer.setData("text/plain", String(index))
+  }
+
+  const handlePageDragOver = (e: React.DragEvent, index: number) => {
+    e.preventDefault()
+    e.dataTransfer.dropEffect = "move"
+    if (pageDragIndex !== null && index !== pageDragIndex) {
+      setPageDragOverIndex(index)
+    }
+  }
+
+  const handlePageDragLeave = () => {
+    setPageDragOverIndex(null)
+  }
+
+  const handlePageDrop = (e: React.DragEvent, toIndex: number) => {
+    e.preventDefault()
+    const fromIndex = pageDragIndex
+    if (fromIndex === null || fromIndex === toIndex || lockedPages.has(toIndex)) {
+      setPageDragIndex(null)
+      setPageDragOverIndex(null)
+      return
+    }
+
+    if (editSubMode === "direct") saveDirectCanvas()
+
+    const newPages = [...editPages]
+    const [moved] = newPages.splice(fromIndex, 1)
+    newPages.splice(toIndex, 0, moved)
+
+    // Rebuild undo history with new indices
+    const indexMap = new Map<number, number>()
+    for (let i = 0; i < editPages.length; i++) {
+      if (i === fromIndex) {
+        indexMap.set(i, toIndex)
+      } else if (fromIndex < toIndex && i > fromIndex && i <= toIndex) {
+        indexMap.set(i, i - 1)
+      } else if (fromIndex > toIndex && i >= toIndex && i < fromIndex) {
+        indexMap.set(i, i + 1)
+      } else {
+        indexMap.set(i, i)
+      }
+    }
+    rebuildUndoHistory(indexMap)
+
+    setEditPages(reindexPages(newPages))
+    setEditCurrentPage(toIndex)
+    invalidateOriginalBytes()
+    setPageDragIndex(null)
+    setPageDragOverIndex(null)
+
+    if (editSubMode === "direct") {
+      setTimeout(() => setCanvasInitTrigger((c) => c + 1), 50)
+    }
+  }
+
+  const handlePageDragEnd = () => {
+    setPageDragIndex(null)
+    setPageDragOverIndex(null)
+  }
+
+  // Apply page numbers to all pages
+  const applyPageNumbers = async () => {
+    if (editPages.length === 0) return
+    if (editSubMode === "direct") saveDirectCanvas()
+
+    const updatedPages = await Promise.all(
+      editPages.map(async (page, index) => {
+        const displayNumber = index + 1
+
+        // Get or save base image (before page numbers)
+        let baseImage = pageNumberBaseImagesRef.current.get(index)
+        if (!baseImage) {
+          // First time applying - save current state as base
+          baseImage = page.editedImageBase64 || page.originalImageBase64
+          pageNumberBaseImagesRef.current.set(index, baseImage)
+        }
+
+        // Skip pages before the start page (but still restore base to remove old numbers)
+        if (displayNumber < pageNumberStartFrom) {
+          // Restore base image (removes any previously applied page numbers)
+          return { ...page, editedImageBase64: baseImage }
+        }
+
+        // Load the base image (not the current edited which may have old page numbers)
+        const img = new window.Image()
+        img.src = `data:image/png;base64,${baseImage}`
+        await new Promise((resolve) => { img.onload = resolve })
+
+        // Create canvas and draw the page
+        const canvas = document.createElement("canvas")
+        canvas.width = page.width
+        canvas.height = page.height
+        const ctx = canvas.getContext("2d")
+        if (!ctx) return page
+
+        ctx.drawImage(img, 0, 0)
+
+        // Calculate page number position
+        const pageNum = displayNumber - pageNumberStartFrom + 1
+        const text = String(pageNum)
+        // Font size as percentage of page height (pageNumberFontSize slider: 10-24 maps to ~1.25%-3% of height)
+        const fontSizePercent = pageNumberFontSize / 800 // e.g., 14 -> 1.75% of height
+        const scaledFontSize = Math.round(page.height * fontSizePercent)
+        ctx.font = `${scaledFontSize}px Pretendard, sans-serif`
+        ctx.fillStyle = "#333333"
+        ctx.textAlign = "center"
+        ctx.textBaseline = "middle"
+
+        const metrics = ctx.measureText(text)
+        // Padding as 2.5% of page height
+        const padding = Math.round(page.height * 0.025)
+        let x = page.width / 2
+        let y = page.height - padding
+
+        switch (pageNumberPosition) {
+          case "bottom-left":
+            x = padding + metrics.width / 2
+            y = page.height - padding
+            break
+          case "bottom-right":
+            x = page.width - padding - metrics.width / 2
+            y = page.height - padding
+            break
+          case "bottom-center":
+            x = page.width / 2
+            y = page.height - padding
+            break
+          case "top-left":
+            x = padding + metrics.width / 2
+            y = padding
+            break
+          case "top-right":
+            x = page.width - padding - metrics.width / 2
+            y = padding
+            break
+          case "top-center":
+            x = page.width / 2
+            y = padding
+            break
+        }
+
+        ctx.fillText(text, x, y)
+
+        const newBase64 = canvas.toDataURL("image/png").split(",")[1]
+        return { ...page, editedImageBase64: newBase64 }
+      })
+    )
+
+    setEditPages(updatedPages)
+    invalidateOriginalBytes()
+    if (editSubMode === "direct") {
+      setTimeout(() => setCanvasInitTrigger((c) => c + 1), 50)
+    }
+  }
+
+  // Remove page numbers (restore base images)
+  const removePageNumbers = () => {
+    if (pageNumberBaseImagesRef.current.size === 0) return
+    if (editSubMode === "direct") saveDirectCanvas()
+
+    const updatedPages = editPages.map((page, index) => {
+      const baseImage = pageNumberBaseImagesRef.current.get(index)
+      if (baseImage) {
+        return { ...page, editedImageBase64: baseImage }
+      }
+      return page
+    })
+
+    // Clear the base images ref
+    pageNumberBaseImagesRef.current.clear()
+
+    setEditPages(updatedPages)
+    invalidateOriginalBytes()
+    if (editSubMode === "direct") {
+      setTimeout(() => setCanvasInitTrigger((c) => c + 1), 50)
+    }
+  }
+
+  // Normalize all pages to match first page dimensions
+  const normalizeAllPageSizes = async () => {
+    if (editPages.length < 2) return
+    if (editSubMode === "direct") saveDirectCanvas()
+
+    const refPage = editPages[0]
+    const targetWidth = refPage.width
+    const targetHeight = refPage.height
+
+    setProgressInfo({ label: "페이지 크기 정규화 중", percent: 0 })
+
+    const updatedPages = await Promise.all(
+      editPages.map(async (page, index) => {
+        setProgressInfo({ label: "페이지 크기 정규화 중", percent: Math.round(((index + 1) / editPages.length) * 100) })
+
+        // Skip if already same size
+        if (page.width === targetWidth && page.height === targetHeight) {
+          return page
+        }
+
+        // Load current image
+        const imgSrc = page.editedImageBase64 || page.originalImageBase64
+        const img = new window.Image()
+        img.src = `data:image/png;base64,${imgSrc}`
+        await new Promise((resolve) => { img.onload = resolve })
+
+        // Create normalized canvas
+        const canvas = document.createElement("canvas")
+        canvas.width = targetWidth
+        canvas.height = targetHeight
+        const ctx = canvas.getContext("2d")!
+        ctx.fillStyle = "#FFFFFF"
+        ctx.fillRect(0, 0, targetWidth, targetHeight)
+
+        // Scale to fit while maintaining aspect ratio
+        const scale = Math.min(targetWidth / img.naturalWidth, targetHeight / img.naturalHeight)
+        const scaledW = img.naturalWidth * scale
+        const scaledH = img.naturalHeight * scale
+        const offsetX = (targetWidth - scaledW) / 2
+        const offsetY = (targetHeight - scaledH) / 2
+        ctx.drawImage(img, offsetX, offsetY, scaledW, scaledH)
+
+        const normalizedBase64 = canvas.toDataURL("image/png").split(",")[1]
+
+        return {
+          ...page,
+          originalImageBase64: normalizedBase64,
+          editedImageBase64: null,
+          width: targetWidth,
+          height: targetHeight,
+        }
+      })
+    )
+
+    // Clear page number base images since dimensions changed
+    pageNumberBaseImagesRef.current.clear()
+
+    setEditPages(updatedPages)
+    invalidateOriginalBytes()
+    setProgressInfo(null)
     if (editSubMode === "direct") {
       setTimeout(() => setCanvasInitTrigger((c) => c + 1), 50)
     }
@@ -1480,11 +1980,12 @@ export default function ConvertPage() {
     setError("")
     setProgressInfo({ label: "배경색 적용 중", percent: 0 })
     let failCount = 0
+    let currentPages = [...editPages]
     for (let i = 0; i < editPages.length; i++) {
       setEditCurrentPage(i)
       setEditStatusText(`배경색 변경 중... (${i + 1}/${editPages.length})`)
       setProgressInfo({ label: "배경색 적용 중", percent: Math.round(((i + 1) / editPages.length) * 100) })
-      const page = editPages[i]
+      const page = currentPages[i]
       try {
         const res = await fetch("/api/edit-pdf", {
           method: "POST",
@@ -1494,7 +1995,10 @@ export default function ConvertPage() {
         const data = await res.json()
         if (res.ok && data.editedImageBase64) {
           pushUndoSnapshot(i)
-          setEditPages((prev) => prev.map((p, idx) => idx === i ? { ...p, editedImageBase64: data.editedImageBase64 } : p))
+          currentPages = currentPages.map((p, idx) => idx === i ? { ...p, editedImageBase64: data.editedImageBase64 } : p)
+          setEditPages(currentPages)
+          // Save after each page for safety
+          saveImmediately(currentPages)
         } else {
           failCount++
         }
@@ -1598,6 +2102,8 @@ export default function ConvertPage() {
     setEditStatusText("로고 적용 중...")
     pushUndoSnapshot(editCurrentPage)
     await applyLogoToPage(editCurrentPage)
+    // Save after logo applied
+    setTimeout(() => saveImmediately(editPages), 100)
     setEditProcessing(false)
     setEditStatusText("")
   }
@@ -1614,6 +2120,8 @@ export default function ConvertPage() {
       pushUndoSnapshot(i)
       await applyLogoToPage(i)
     }
+    // Save after all logos applied
+    setTimeout(() => saveImmediately(editPages), 100)
     setEditProcessing(false)
     setEditStatusText("")
     setProgressInfo(null)
@@ -1626,7 +2134,10 @@ export default function ConvertPage() {
     const idx = pageIndex ?? editCurrentPage
     pushUndoSnapshot(idx)
     const base64 = canvas.toDataURL("image/png").split(",")[1]
-    setEditPages((prev) => prev.map((p, i) => i === idx ? { ...p, editedImageBase64: base64 } : p))
+    const updatedPages = editPages.map((p, i) => i === idx ? { ...p, editedImageBase64: base64 } : p)
+    setEditPages(updatedPages)
+    // Immediately save after direct edit
+    saveImmediately(updatedPages)
   }
 
   const handleSubModeChange = (newMode: EditSubMode) => {
@@ -1655,6 +2166,17 @@ export default function ConvertPage() {
     }
   }
 
+  // Save current canvas state to editPages
+  const saveCanvasToEditPages = () => {
+    const canvas = drawCanvasRef.current
+    if (!canvas) return
+    const dataUrl = canvas.toDataURL("image/png")
+    const base64 = dataUrl.replace(/^data:image\/png;base64,/, "")
+    setEditPages((prev) =>
+      prev.map((p, i) => (i === editCurrentPage ? { ...p, editedImageBase64: base64 } : p))
+    )
+  }
+
   const handleDirectMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = drawCanvasRef.current
     if (!canvas) return
@@ -1663,21 +2185,96 @@ export default function ConvertPage() {
     const scale = canvas.width / canvas.getBoundingClientRect().width
 
     if (directTool === "draw" || directTool === "eraser") {
+      // Push undo snapshot before starting new stroke
+      pushUndoSnapshot(editCurrentPage)
       isDirectDrawingRef.current = true
       lastDrawPointRef.current = pos
       canvasSnapshotRef.current = ctx.getImageData(0, 0, canvas.width, canvas.height)
       ctx.beginPath()
       ctx.moveTo(pos.x, pos.y)
-      ctx.strokeStyle = directTool === "eraser" ? "#FFFFFF" : drawColor
+      ctx.strokeStyle = directTool === "eraser" ? bgColor : drawColor
       ctx.lineWidth = (directTool === "eraser" ? drawSize * 5 : drawSize) * scale
       ctx.lineCap = "round"
       ctx.lineJoin = "round"
     } else if (directTool === "text") {
-      if (directTextInput && directTextValue.trim()) addDirectText()
-      setDirectTextInput(pos)
-      setDirectTextValue("")
+      // If already in text input mode, confirm current text first
+      if (directTextInput && directTextValue.trim()) {
+        confirmDirectText()
+      } else if (directTextInput) {
+        cancelDirectText()
+      }
+
+      // Check if clicking on existing text object
+      const pageTexts = textObjectsRef.current.get(editCurrentPage) || []
+      let clickedTextIndex = -1
+      for (let i = pageTexts.length - 1; i >= 0; i--) {
+        const t = pageTexts[i]
+        const fontSize = t.size * scale
+        ctx.font = `${fontSize}px "${t.font}"`
+        const textWidth = ctx.measureText(t.text).width
+        const textHeight = fontSize
+        // Check if click is within text bounding box
+        if (pos.x >= t.x && pos.x <= t.x + textWidth &&
+            pos.y >= t.y && pos.y <= t.y + textHeight) {
+          clickedTextIndex = i
+          break
+        }
+      }
+
+      if (clickedTextIndex >= 0) {
+        // Start drag mode for existing text (will decide edit vs move on mouseup)
+        const textObj = pageTexts[clickedTextIndex]
+        setDraggingTextIndex(clickedTextIndex)
+        dragStartPosRef.current = pos
+        dragOriginalTextPosRef.current = { x: textObj.x, y: textObj.y }
+        isDragMovedRef.current = false
+
+        // Use base canvas (without texts) if available, otherwise use editPages
+        const baseCanvasData = baseCanvasDataRef.current.get(editCurrentPage)
+        const pageData = editPages[editCurrentPage]
+        const imgSrc = baseCanvasData || pageData?.originalImageBase64
+
+        if (imgSrc) {
+          const img = new Image()
+          img.onload = () => {
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+            // Redraw all texts except the one being dragged
+            pageTexts.forEach((t, i) => {
+              if (i !== clickedTextIndex) {
+                const fontSize = t.size * scale
+                ctx.fillStyle = t.color
+                ctx.font = `${fontSize}px "${t.font}"`
+                ctx.fillText(t.text, t.x, t.y + fontSize)
+              }
+            })
+            // Save snapshot without the dragged text
+            canvasSnapshotRef.current = ctx.getImageData(0, 0, canvas.width, canvas.height)
+            // Draw the dragged text at original position for immediate visual feedback
+            const fontSize = textObj.size * scale
+            ctx.fillStyle = textObj.color
+            ctx.font = `${fontSize}px "${textObj.font}"`
+            ctx.fillText(textObj.text, textObj.x, textObj.y + fontSize)
+          }
+          img.src = `data:image/png;base64,${imgSrc}`
+        }
+      } else {
+        // New text - push undo snapshot and start text input
+        pushUndoSnapshot(editCurrentPage)
+        setEditingTextIndex(null)
+        directTextSnapshotRef.current = ctx.getImageData(0, 0, canvas.width, canvas.height)
+        setDirectTextInput(pos)
+        setDirectTextValue("")
+        setDirectTextCursorVisible(true)
+      }
     } else if (directTool === "rect") {
+      // Push undo snapshot before starting rectangle
+      pushUndoSnapshot(editCurrentPage)
       setDirectRectStart(pos)
+      canvasSnapshotRef.current = ctx.getImageData(0, 0, canvas.width, canvas.height)
+    } else if (directTool === "select") {
+      // Start selection
+      setSelectionStart(pos)
+      setSelectionRect(null)
       canvasSnapshotRef.current = ctx.getImageData(0, 0, canvas.width, canvas.height)
     }
   }
@@ -1687,6 +2284,7 @@ export default function ConvertPage() {
     if (!canvas) return
     const pos = getCanvasCoords(e)
     const ctx = canvas.getContext("2d")!
+    const scale = canvas.width / canvas.getBoundingClientRect().width
 
     if ((directTool === "draw" || directTool === "eraser") && isDirectDrawingRef.current) {
       ctx.lineTo(pos.x, pos.y)
@@ -1696,40 +2294,485 @@ export default function ConvertPage() {
       if (canvasSnapshotRef.current) {
         ctx.putImageData(canvasSnapshotRef.current, 0, 0)
       }
-      const scale = canvas.width / canvas.getBoundingClientRect().width
       ctx.strokeStyle = drawColor
       ctx.lineWidth = drawSize * scale
       ctx.strokeRect(directRectStart.x, directRectStart.y, pos.x - directRectStart.x, pos.y - directRectStart.y)
+    } else if (directTool === "select" && selectionStart) {
+      // Draw selection rectangle preview
+      if (canvasSnapshotRef.current) {
+        ctx.putImageData(canvasSnapshotRef.current, 0, 0)
+      }
+      const x = Math.min(selectionStart.x, pos.x)
+      const y = Math.min(selectionStart.y, pos.y)
+      const w = Math.abs(pos.x - selectionStart.x)
+      const h = Math.abs(pos.y - selectionStart.y)
+      // Draw selection rectangle with dashed border
+      ctx.strokeStyle = "#6366f1"
+      ctx.lineWidth = 2
+      ctx.setLineDash([5, 5])
+      ctx.strokeRect(x, y, w, h)
+      ctx.setLineDash([])
+      // Draw semi-transparent overlay
+      ctx.fillStyle = "rgba(99, 102, 241, 0.1)"
+      ctx.fillRect(x, y, w, h)
+    } else if (directTool === "text" && draggingTextIndex !== null && dragStartPosRef.current && dragOriginalTextPosRef.current) {
+      // Dragging text - check if moved more than 5px threshold
+      const dx = pos.x - dragStartPosRef.current.x
+      const dy = pos.y - dragStartPosRef.current.y
+      if (Math.abs(dx) > 5 || Math.abs(dy) > 5) {
+        isDragMovedRef.current = true
+      }
+      if (isDragMovedRef.current) {
+        // Update text position and redraw
+        const pageTexts = textObjectsRef.current.get(editCurrentPage) || []
+        const textObj = pageTexts[draggingTextIndex]
+        if (textObj && canvasSnapshotRef.current) {
+          // Restore snapshot (which doesn't include the dragged text)
+          ctx.putImageData(canvasSnapshotRef.current, 0, 0)
+          // Draw only the dragging text at new position
+          const newX = dragOriginalTextPosRef.current.x + dx
+          const newY = dragOriginalTextPosRef.current.y + dy
+          const fontSize = textObj.size * scale
+          ctx.fillStyle = textObj.color
+          ctx.font = `${fontSize}px "${textObj.font}"`
+          ctx.fillText(textObj.text, newX, newY + fontSize)
+        }
+      }
     }
   }
 
-  const handleDirectMouseUp = () => {
+  // Update base canvas after non-text edits (drawing, eraser, rectangle)
+  // This ensures text operations have correct base to work with
+  const updateBaseCanvasAfterNonTextEdit = () => {
+    const canvas = drawCanvasRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext("2d")!
+    const pageTexts = textObjectsRef.current.get(editCurrentPage) || []
+
+    if (pageTexts.length === 0) {
+      // No texts on this page - save current canvas directly as base
+      const dataUrl = canvas.toDataURL("image/png")
+      baseCanvasDataRef.current.set(editCurrentPage, dataUrl.replace(/^data:image\/png;base64,/, ""))
+    } else if (canvasSnapshotRef.current) {
+      // Texts exist - apply the drawing delta to base canvas
+      const currentState = ctx.getImageData(0, 0, canvas.width, canvas.height)
+      const beforeDrawing = canvasSnapshotRef.current
+
+      // Load base canvas to apply delta
+      const baseData = baseCanvasDataRef.current.get(editCurrentPage)
+      const pageData = editPages[editCurrentPage]
+      const baseSrc = baseData || pageData?.originalImageBase64
+
+      if (baseSrc) {
+        const img = new Image()
+        img.onload = () => {
+          // Draw base (without texts)
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+          const baseState = ctx.getImageData(0, 0, canvas.width, canvas.height)
+
+          // Apply delta: where current differs from beforeDrawing, copy to base
+          for (let i = 0; i < currentState.data.length; i += 4) {
+            // Check if pixel changed (drawing happened here)
+            if (currentState.data[i] !== beforeDrawing.data[i] ||
+                currentState.data[i + 1] !== beforeDrawing.data[i + 1] ||
+                currentState.data[i + 2] !== beforeDrawing.data[i + 2] ||
+                currentState.data[i + 3] !== beforeDrawing.data[i + 3]) {
+              // Copy the new pixel to base
+              baseState.data[i] = currentState.data[i]
+              baseState.data[i + 1] = currentState.data[i + 1]
+              baseState.data[i + 2] = currentState.data[i + 2]
+              baseState.data[i + 3] = currentState.data[i + 3]
+            }
+          }
+
+          // Save updated base
+          ctx.putImageData(baseState, 0, 0)
+          const dataUrl = canvas.toDataURL("image/png")
+          baseCanvasDataRef.current.set(editCurrentPage, dataUrl.replace(/^data:image\/png;base64,/, ""))
+
+          // Restore canvas with texts
+          ctx.putImageData(currentState, 0, 0)
+        }
+        img.src = `data:image/png;base64,${baseSrc}`
+      }
+    }
+  }
+
+  const handleDirectMouseUp = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const canvas = drawCanvasRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext("2d")!
+
     if ((directTool === "draw" || directTool === "eraser") && isDirectDrawingRef.current) {
       isDirectDrawingRef.current = false
       lastDrawPointRef.current = null
+      // Save canvas state after stroke completes
+      saveCanvasToEditPages()
+      // Also update base canvas (for text operations later)
+      updateBaseCanvasAfterNonTextEdit()
     } else if (directTool === "rect" && directRectStart) {
       setDirectRectStart(null)
+      canvasSnapshotRef.current = null
+      // Save canvas state after rectangle completes
+      saveCanvasToEditPages()
+      // Also update base canvas (for text operations later)
+      updateBaseCanvasAfterNonTextEdit()
+    } else if (directTool === "text" && draggingTextIndex !== null) {
+      const pos = getCanvasCoords(e)
+      const pageTexts = textObjectsRef.current.get(editCurrentPage) || []
+      const textObj = pageTexts[draggingTextIndex]
+
+      if (isDragMovedRef.current && dragOriginalTextPosRef.current && dragStartPosRef.current && textObj) {
+        // Moved - finalize new position
+        pushUndoSnapshot(editCurrentPage)
+        const dx = pos.x - dragStartPosRef.current.x
+        const dy = pos.y - dragStartPosRef.current.y
+        textObj.x = dragOriginalTextPosRef.current.x + dx
+        textObj.y = dragOriginalTextPosRef.current.y + dy
+        textObjectsRef.current.set(editCurrentPage, pageTexts)
+        // Save canvas state
+        saveCanvasToEditPages()
+      } else if (textObj) {
+        // Not moved - enter edit mode
+        pushUndoSnapshot(editCurrentPage)
+        setEditingTextIndex(draggingTextIndex)
+        setDirectTextInput({ x: textObj.x, y: textObj.y })
+        setDirectTextValue(textObj.text)
+        setDirectTextSize(textObj.size)
+        setDirectTextFontFamily(textObj.font)
+        setDrawColor(textObj.color)
+        // Redraw canvas without this text
+        redrawCanvasWithoutText(draggingTextIndex)
+        // Save snapshot after removing the text
+        directTextSnapshotRef.current = ctx.getImageData(0, 0, canvas.width, canvas.height)
+        setDirectTextCursorVisible(true)
+      }
+
+      // Reset drag state
+      setDraggingTextIndex(null)
+      dragStartPosRef.current = null
+      dragOriginalTextPosRef.current = null
+      isDragMovedRef.current = false
+      canvasSnapshotRef.current = null
+    } else if (directTool === "select" && selectionStart) {
+      // Finalize selection
+      const pos = getCanvasCoords(e)
+      const x = Math.min(selectionStart.x, pos.x)
+      const y = Math.min(selectionStart.y, pos.y)
+      const w = Math.abs(pos.x - selectionStart.x)
+      const h = Math.abs(pos.y - selectionStart.y)
+
+      if (w > 5 && h > 5) {
+        // Valid selection
+        setSelectionRect({ x, y, w, h })
+        // Restore canvas without selection preview
+        if (canvasSnapshotRef.current) {
+          ctx.putImageData(canvasSnapshotRef.current, 0, 0)
+        }
+      } else {
+        // Too small, clear selection
+        setSelectionRect(null)
+        if (canvasSnapshotRef.current) {
+          ctx.putImageData(canvasSnapshotRef.current, 0, 0)
+        }
+      }
+      setSelectionStart(null)
       canvasSnapshotRef.current = null
     }
   }
 
-  const addDirectText = () => {
-    if (!directTextInput || !directTextValue.trim() || !drawCanvasRef.current) return
+  // Direct mode selection tool actions
+  const copyDirectSelection = () => {
+    if (!selectionRect || !drawCanvasRef.current) return
     const canvas = drawCanvasRef.current
     const ctx = canvas.getContext("2d")!
+    // Copy selected region to clipboard ref
+    selectionClipboardRef.current = ctx.getImageData(
+      selectionRect.x, selectionRect.y, selectionRect.w, selectionRect.h
+    )
+  }
+
+  const cutDirectSelection = () => {
+    if (!selectionRect || !drawCanvasRef.current) return
+    const canvas = drawCanvasRef.current
+    const ctx = canvas.getContext("2d")!
+    // Copy to clipboard first
+    copyDirectSelection()
+    // Fill with background color
+    pushUndoSnapshot(editCurrentPage)
+    ctx.fillStyle = bgColor
+    ctx.fillRect(selectionRect.x, selectionRect.y, selectionRect.w, selectionRect.h)
+    saveCanvasToEditPages()
+    setSelectionRect(null)
+  }
+
+  const deleteDirectSelection = () => {
+    if (!selectionRect || !drawCanvasRef.current) return
+    const canvas = drawCanvasRef.current
+    const ctx = canvas.getContext("2d")!
+    // Fill with background color
+    pushUndoSnapshot(editCurrentPage)
+    ctx.fillStyle = bgColor
+    ctx.fillRect(selectionRect.x, selectionRect.y, selectionRect.w, selectionRect.h)
+    saveCanvasToEditPages()
+    setSelectionRect(null)
+  }
+
+  const pasteDirectSelection = () => {
+    if (!selectionClipboardRef.current || !drawCanvasRef.current) return
+    const canvas = drawCanvasRef.current
+    const ctx = canvas.getContext("2d")!
+    // Paste at current selection position or center
+    pushUndoSnapshot(editCurrentPage)
+    const x = selectionRect?.x ?? (canvas.width - selectionClipboardRef.current.width) / 2
+    const y = selectionRect?.y ?? (canvas.height - selectionClipboardRef.current.height) / 2
+    ctx.putImageData(selectionClipboardRef.current, x, y)
+    saveCanvasToEditPages()
+  }
+
+  // Render text with cursor on canvas (real-time preview)
+  const renderDirectTextWithCursor = useCallback((showCursor: boolean) => {
+    if (!directTextInput || !drawCanvasRef.current) return
+    const canvas = drawCanvasRef.current
+    const ctx = canvas.getContext("2d")!
+
+    // Restore snapshot before rendering text
+    if (directTextSnapshotRef.current) {
+      ctx.putImageData(directTextSnapshotRef.current, 0, 0)
+    }
+
     const scale = canvas.width / canvas.getBoundingClientRect().width
     const fontSize = directTextSize * scale
     ctx.fillStyle = drawColor
-    ctx.font = `${fontSize}px sans-serif`
-    ctx.fillText(directTextValue, directTextInput.x, directTextInput.y + fontSize)
+    ctx.font = `${fontSize}px "${directTextFontFamily}"`
+
+    // Draw text
+    const textY = directTextInput.y + fontSize
+    if (directTextValue) {
+      ctx.fillText(directTextValue, directTextInput.x, textY)
+    }
+
+    // Draw cursor
+    if (showCursor) {
+      const textWidth = ctx.measureText(directTextValue).width
+      ctx.fillStyle = drawColor
+      ctx.fillRect(directTextInput.x + textWidth + 2, directTextInput.y + 4, 2, fontSize - 4)
+    }
+  }, [directTextInput, directTextValue, directTextSize, directTextFontFamily, drawColor])
+
+  // Cursor blink effect
+  useEffect(() => {
+    if (!directTextInput) return
+    const interval = setInterval(() => {
+      setDirectTextCursorVisible(v => !v)
+    }, 530)
+    return () => clearInterval(interval)
+  }, [directTextInput])
+
+  // Re-render text with cursor when cursor visibility changes
+  useEffect(() => {
+    if (directTextInput) {
+      renderDirectTextWithCursor(directTextCursorVisible)
+    }
+  }, [directTextInput, directTextCursorVisible, directTextValue, renderDirectTextWithCursor])
+
+  // Redraw canvas without a specific text object (for re-editing)
+  const redrawCanvasWithoutText = (excludeIndex: number) => {
+    const canvas = drawCanvasRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext("2d")!
+    const pageData = editPages[editCurrentPage]
+    if (!pageData) return
+
+    // Use base canvas (without texts) if available
+    const baseCanvasData = baseCanvasDataRef.current.get(editCurrentPage)
+    const imgSrc = baseCanvasData || pageData.originalImageBase64
+
+    // Redraw the base image
+    const img = new Image()
+    img.onload = () => {
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+      // Redraw all text objects except the one being edited
+      const pageTexts = textObjectsRef.current.get(editCurrentPage) || []
+      const scale = canvas.width / canvas.getBoundingClientRect().width
+      pageTexts.forEach((t, i) => {
+        if (i !== excludeIndex) {
+          const fontSize = t.size * scale
+          ctx.fillStyle = t.color
+          ctx.font = `${fontSize}px "${t.font}"`
+          ctx.fillText(t.text, t.x, t.y + fontSize)
+        }
+      })
+    }
+    img.src = `data:image/png;base64,${imgSrc}`
+  }
+
+  // Confirm text input
+  const confirmDirectText = () => {
+    if (!directTextInput || !drawCanvasRef.current) return
+    const canvas = drawCanvasRef.current
+    const ctx = canvas.getContext("2d")!
+    const trimmedText = directTextValue.trim()
+
+    // Save base canvas (before text) if this is a new text and base not yet saved
+    if (directTextSnapshotRef.current && editingTextIndex === null) {
+      // Save base canvas without texts for this page
+      ctx.putImageData(directTextSnapshotRef.current, 0, 0)
+      const baseDataUrl = canvas.toDataURL("image/png")
+      baseCanvasDataRef.current.set(editCurrentPage, baseDataUrl.replace(/^data:image\/png;base64,/, ""))
+    }
+
+    // Final render without cursor (renders the text on canvas)
+    renderDirectTextWithCursor(false)
+
+    // Save text object for future re-editing
+    if (trimmedText) {
+      const pageTexts = textObjectsRef.current.get(editCurrentPage) || []
+      const newTextObj: TextObject = {
+        x: directTextInput.x,
+        y: directTextInput.y,
+        text: trimmedText,
+        size: directTextSize,
+        font: directTextFontFamily,
+        color: drawColor,
+      }
+      if (editingTextIndex !== null) {
+        // Replace existing text object
+        pageTexts[editingTextIndex] = newTextObj
+      } else {
+        // Add new text object
+        pageTexts.push(newTextObj)
+      }
+      textObjectsRef.current.set(editCurrentPage, pageTexts)
+    } else if (editingTextIndex !== null) {
+      // Empty text while editing existing - remove the text object
+      const pageTexts = textObjectsRef.current.get(editCurrentPage) || []
+      pageTexts.splice(editingTextIndex, 1)
+      textObjectsRef.current.set(editCurrentPage, pageTexts)
+    }
+
+    directTextSnapshotRef.current = null
     setDirectTextInput(null)
     setDirectTextValue("")
+    setEditingTextIndex(null)
+    // Save canvas state (with text rendered) for display
+    saveCanvasToEditPages()
   }
+
+  // Cancel text input
+  const cancelDirectText = () => {
+    if (!directTextInput || !drawCanvasRef.current) return
+    const canvas = drawCanvasRef.current
+    const ctx = canvas.getContext("2d")!
+
+    // Restore original snapshot
+    if (directTextSnapshotRef.current) {
+      ctx.putImageData(directTextSnapshotRef.current, 0, 0)
+    }
+
+    // If editing existing text, redraw it back
+    if (editingTextIndex !== null) {
+      const pageTexts = textObjectsRef.current.get(editCurrentPage) || []
+      const textObj = pageTexts[editingTextIndex]
+      if (textObj) {
+        const scale = canvas.width / canvas.getBoundingClientRect().width
+        const fontSize = textObj.size * scale
+        ctx.fillStyle = textObj.color
+        ctx.font = `${fontSize}px "${textObj.font}"`
+        ctx.fillText(textObj.text, textObj.x, textObj.y + fontSize)
+      }
+    }
+
+    directTextSnapshotRef.current = null
+    setDirectTextInput(null)
+    setDirectTextValue("")
+    setEditingTextIndex(null)
+  }
+
+  // Handle hidden input for IME-compatible text entry
+  const handleHiddenInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setDirectTextValue(e.target.value)
+  }
+
+  const handleHiddenInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (isComposing) return // Don't handle keys during IME composition
+    if (e.key === "Enter") {
+      e.preventDefault()
+      confirmDirectText()
+    } else if (e.key === "Escape") {
+      e.preventDefault()
+      cancelDirectText()
+    }
+  }
+
+  // Focus hidden input when text input mode starts
+  useEffect(() => {
+    if (directTextInput && directTool === "text" && hiddenTextInputRef.current) {
+      hiddenTextInputRef.current.focus()
+    }
+  }, [directTextInput, directTool])
+
+  // Delete text with Delete/Backspace key when dragging (selecting) text
+  const deleteSelectedText = useCallback(() => {
+    if (draggingTextIndex === null) return
+    const canvas = drawCanvasRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext("2d")!
+
+    pushUndoSnapshot(editCurrentPage)
+
+    // Remove text from storage
+    const pageTexts = textObjectsRef.current.get(editCurrentPage) || []
+    pageTexts.splice(draggingTextIndex, 1)
+    textObjectsRef.current.set(editCurrentPage, pageTexts)
+
+    // Redraw canvas without deleted text
+    if (canvasSnapshotRef.current) {
+      ctx.putImageData(canvasSnapshotRef.current, 0, 0)
+    }
+
+    // Reset drag state
+    setDraggingTextIndex(null)
+    dragStartPosRef.current = null
+    dragOriginalTextPosRef.current = null
+    isDragMovedRef.current = false
+    canvasSnapshotRef.current = null
+
+    // Save canvas state
+    saveCanvasToEditPages()
+  }, [draggingTextIndex, editCurrentPage, pushUndoSnapshot, saveCanvasToEditPages])
+
+  // Handle Delete key for text deletion
+  useEffect(() => {
+    if (draggingTextIndex === null || directTool !== "text") return
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Delete" || e.key === "Backspace") {
+        e.preventDefault()
+        deleteSelectedText()
+      } else if (e.key === "Escape") {
+        // Cancel drag/selection
+        setDraggingTextIndex(null)
+        dragStartPosRef.current = null
+        dragOriginalTextPosRef.current = null
+        isDragMovedRef.current = false
+        canvasSnapshotRef.current = null
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown)
+    return () => window.removeEventListener("keydown", handleKeyDown)
+  }, [draggingTextIndex, directTool, deleteSelectedText])
 
   const downloadEditedPdf = async () => {
     if (editPages.length === 0) return
+
+    // Create abort controller for cancellation
+    const abortController = new AbortController()
+    abortControllerRef.current = abortController
+
     setSaveAnimation("saving")
-    setEditStatusText("PDF 생성 중...")
+    setEditStatusText("PDF 생성 중... (ESC로 취소)")
     setProgressInfo({ label: "PDF 저장 중", percent: 0 })
     try {
       let pdfBytes: Uint8Array
@@ -1738,6 +2781,9 @@ export default function ConvertPage() {
         const editedPages = editPages.filter((p) => p.editedImageBase64)
         let editIdx = 0
         for (const page of editPages) {
+          // Check for cancellation
+          if (abortController.signal.aborted) throw new Error("cancelled")
+
           if (page.editedImageBase64) {
             editIdx++
             setProgressInfo({ label: "PDF 저장 중", percent: Math.round((editIdx / editedPages.length) * 90) })
@@ -1749,10 +2795,14 @@ export default function ConvertPage() {
             pdfPage.drawImage(image, { x: 0, y: 0, width, height })
           }
         }
+        if (abortController.signal.aborted) throw new Error("cancelled")
         pdfBytes = await pdfDoc.save()
       } else {
         const pdfDoc = await PDFDocument.create()
         for (let di = 0; di < editPages.length; di++) {
+          // Check for cancellation
+          if (abortController.signal.aborted) throw new Error("cancelled")
+
           const page = editPages[di]
           setProgressInfo({ label: "PDF 저장 중", percent: Math.round(((di + 1) / editPages.length) * 90) })
           const imgSrc = page.editedImageBase64 || page.originalImageBase64
@@ -1765,6 +2815,7 @@ export default function ConvertPage() {
           const pdfPage = pdfDoc.addPage([pageW, pageH])
           pdfPage.drawImage(image, { x: 0, y: 0, width: pageW, height: pageH })
         }
+        if (abortController.signal.aborted) throw new Error("cancelled")
         pdfBytes = await pdfDoc.save()
       }
       setProgressInfo({ label: "다운로드 중", percent: 100 })
@@ -1772,11 +2823,19 @@ export default function ConvertPage() {
       const link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = `edited_${editFileName}`; link.click()
       setSaveAnimation("success")
       setTimeout(() => setSaveAnimation("idle"), 1500)
-    } catch {
+    } catch (err) {
+      // Don't show error if cancelled
+      if (err instanceof Error && err.message === "cancelled") {
+        return
+      }
       setError("PDF 저장에 실패했습니다.")
       setSaveAnimation("error")
       setTimeout(() => setSaveAnimation("idle"), 2000)
-    } finally { setEditStatusText(""); setProgressInfo(null) }
+    } finally {
+      abortControllerRef.current = null
+      setEditStatusText("")
+      setProgressInfo(null)
+    }
   }
 
   // Send PDF via email
@@ -2075,9 +3134,8 @@ export default function ConvertPage() {
 
         <div className="flex flex-1 overflow-hidden">
           {/* Sidebar (Tool Rail) - collapsible */}
-          <aside className={`flex-shrink-0 border-r border-border bg-muted/10 flex flex-col items-center py-4 gap-2 z-40 transition-all duration-300 ${
-            isFullscreen ? "hidden" : sidebarCollapsed ? "w-0 overflow-hidden border-r-0" : "w-[72px]"
-          }`}>
+          <aside className={`flex-shrink-0 border-r border-border bg-muted/10 flex flex-col items-center py-4 gap-2 z-40 transition-all duration-300 ${isFullscreen ? "hidden" : sidebarCollapsed ? "w-0 overflow-hidden border-r-0" : "w-[72px]"
+            }`}>
             {MODES.map((m) => (
               <button
                 key={m.id}
@@ -2093,32 +3151,31 @@ export default function ConvertPage() {
               </button>
             ))}
 
-            {/* Email - only visible in AI Edit mode with PDF loaded and user logged in */}
-            {isAiEdit && authUser && editPages.length > 0 && (
-              <>
-                <div className="w-8 h-px bg-border my-2" />
-                <button
-                  onClick={() => setShowEmailPanel(true)}
-                  className="w-12 h-12 flex flex-col items-center justify-center rounded-lg transition-all duration-200 group text-muted-foreground hover:bg-muted hover:text-foreground"
-                  title="이메일 발송"
-                >
-                  <Mail className="w-5 h-5 mb-0.5" />
-                  <span className="text-[10px] font-medium opacity-70 group-hover:opacity-100">이메일</span>
-                </button>
-              </>
-            )}
+            {/* Email - always visible, prompts login if not authenticated */}
+            <div className="w-8 h-px bg-border my-2" />
+            <button
+              onClick={() => {
+                if (authUser) {
+                  setShowEmailPanel(true)
+                } else {
+                  signInWithGoogle()
+                }
+              }}
+              className="w-12 h-12 flex flex-col items-center justify-center rounded-lg transition-all duration-200 group text-muted-foreground hover:bg-muted hover:text-foreground"
+              title={authUser ? "이메일 발송" : "로그인 후 이메일 발송"}
+            >
+              <Mail className="w-5 h-5 mb-0.5" />
+              <span className="text-[10px] font-medium opacity-70 group-hover:opacity-100">이메일</span>
+            </button>
           </aside>
 
           {/* Main Content (Canvas) */}
-          <main className={`flex-1 relative flex flex-col overflow-hidden transition-all duration-300 ${
-            isFullscreen ? "bg-black" : "bg-muted/30"
-          }`}>
-            <div className={`absolute inset-0 overflow-auto flex flex-col transition-all duration-300 ${
-              isFullscreen ? "p-0" : "p-6"
+          <main className={`flex-1 relative flex flex-col overflow-hidden transition-all duration-300 ${isFullscreen ? "bg-black" : "bg-muted/30"
             }`}>
-              <div className={`w-full flex-1 flex flex-col transition-all duration-300 ${
-                isFullscreen ? "" : isAiEdit && editPages.length > 0 ? "max-w-7xl mx-auto" : "max-w-5xl mx-auto"
+            <div className={`absolute inset-0 overflow-auto flex flex-col transition-all duration-300 ${isFullscreen ? "p-0" : "p-6"
               }`}>
+              <div className={`w-full flex-1 flex flex-col transition-all duration-300 ${isFullscreen ? "" : isAiEdit && editPages.length > 0 ? "max-w-7xl mx-auto" : "max-w-5xl mx-auto"
+                }`}>
                 {/* Mode Header - hidden in fullscreen */}
                 {!isFullscreen && (
                   <div className="mb-6">
@@ -2344,22 +3401,133 @@ export default function ConvertPage() {
                             >
                               <Trash2 className="w-4 h-4" />
                             </button>
+                            <div className="w-px h-4 bg-border mx-0.5" />
+                            <button
+                              onClick={normalizeAllPageSizes}
+                              disabled={editPages.length < 2 || editPages.every((p, i) => i === 0 || (p.width === editPages[0].width && p.height === editPages[0].height))}
+                              className="p-1.5 text-muted-foreground hover:text-foreground disabled:opacity-20 transition-colors"
+                              title="모든 페이지 크기를 첫 번째 페이지에 맞춤"
+                            >
+                              <Maximize2 className="w-4 h-4" />
+                            </button>
                           </div>
-                          {/* Inline thumbnails */}
+                          {/* Page Numbering Controls */}
+                          <div className="relative">
+                            <button
+                              onClick={() => setShowPageNumberPanel(!showPageNumberPanel)}
+                              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border transition-colors text-sm ${pageNumberEnabled ? "bg-indigo-600 text-white border-indigo-500" : "bg-card/80 text-muted-foreground border-border hover:text-foreground"}`}
+                              title="페이지 번호 설정"
+                            >
+                              <Hash className="w-4 h-4" />
+                              <span className="hidden sm:inline">페이지 번호</span>
+                            </button>
+                            {/* Page Number Settings Popover */}
+                            {showPageNumberPanel && (
+                            <>
+                            {/* Backdrop to close on outside click */}
+                            <div className="fixed inset-0 z-40" onClick={() => setShowPageNumberPanel(false)} />
+                            <div className="absolute top-full left-0 mt-2 bg-popover border border-border rounded-xl p-4 shadow-xl z-50 min-w-[240px]">
+                              <div className="flex flex-col gap-3">
+                                <label className="flex items-center gap-2 cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={pageNumberEnabled}
+                                    onChange={(e) => setPageNumberEnabled(e.target.checked)}
+                                    className="w-4 h-4 rounded border-border"
+                                  />
+                                  <span className="text-sm text-foreground">페이지 번호 사용</span>
+                                </label>
+                                {pageNumberEnabled && (
+                                  <>
+                                    <div className="flex flex-col gap-1">
+                                      <span className="text-xs text-muted-foreground">위치</span>
+                                      <select
+                                        value={pageNumberPosition}
+                                        onChange={(e) => setPageNumberPosition(e.target.value as PageNumberPosition)}
+                                        className="px-2 py-1 text-sm bg-secondary border border-border rounded-lg"
+                                      >
+                                        <option value="bottom-center">하단 중앙</option>
+                                        <option value="bottom-left">하단 좌측</option>
+                                        <option value="bottom-right">하단 우측</option>
+                                        <option value="top-center">상단 중앙</option>
+                                        <option value="top-left">상단 좌측</option>
+                                        <option value="top-right">상단 우측</option>
+                                      </select>
+                                    </div>
+                                    <div className="flex flex-col gap-1">
+                                      <span className="text-xs text-muted-foreground">시작 페이지</span>
+                                      <input
+                                        type="number"
+                                        min={1}
+                                        max={editPages.length}
+                                        value={pageNumberStartFrom}
+                                        onChange={(e) => setPageNumberStartFrom(Math.max(1, parseInt(e.target.value) || 1))}
+                                        className="px-2 py-1 text-sm bg-secondary border border-border rounded-lg w-20"
+                                      />
+                                      <span className="text-[10px] text-muted-foreground">{pageNumberStartFrom > 1 ? `${pageNumberStartFrom - 1}페이지까지 번호 없음` : "모든 페이지에 번호"}</span>
+                                    </div>
+                                    <div className="flex flex-col gap-1">
+                                      <span className="text-xs text-muted-foreground">글꼴 크기 (상대값)</span>
+                                      <input
+                                        type="range"
+                                        min={10}
+                                        max={24}
+                                        value={pageNumberFontSize}
+                                        onChange={(e) => setPageNumberFontSize(parseInt(e.target.value))}
+                                        className="w-full"
+                                      />
+                                      <span className="text-[10px] text-muted-foreground text-center">{pageNumberFontSize} (페이지 크기에 비례)</span>
+                                    </div>
+                                    <div className="flex gap-2 mt-1">
+                                      <button
+                                        onClick={applyPageNumbers}
+                                        className="flex-1 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium rounded-lg transition-colors"
+                                      >
+                                        적용
+                                      </button>
+                                      <button
+                                        onClick={removePageNumbers}
+                                        disabled={pageNumberBaseImagesRef.current.size === 0}
+                                        className="px-3 py-1.5 bg-secondary hover:bg-secondary/80 text-foreground text-sm font-medium rounded-lg transition-colors disabled:opacity-50"
+                                      >
+                                        제거
+                                      </button>
+                                    </div>
+                                  </>
+                                )}
+                              </div>
+                            </div>
+                            </>
+                            )}
+                          </div>
+                          {/* Inline thumbnails with drag-and-drop reorder */}
                           <div className="flex gap-1.5 overflow-x-auto flex-1">
                             {editPages.map((page, i) => (
-                              <div key={`page-${i}`} className="relative flex-shrink-0 group/thumb">
+                              <div
+                                key={`page-${i}`}
+                                className={`relative flex-shrink-0 group/thumb transition-transform ${pageDragIndex === i ? "opacity-50 scale-95" : ""} ${pageDragOverIndex === i ? "translate-x-2" : ""}`}
+                                draggable={!lockedPages.has(i)}
+                                onDragStart={(e) => handlePageDragStart(e, i)}
+                                onDragOver={(e) => handlePageDragOver(e, i)}
+                                onDragLeave={handlePageDragLeave}
+                                onDrop={(e) => handlePageDrop(e, i)}
+                                onDragEnd={handlePageDragEnd}
+                              >
+                                {/* Drop indicator */}
+                                {pageDragOverIndex === i && pageDragIndex !== null && pageDragIndex !== i && (
+                                  <div className="absolute -left-1 top-0 bottom-0 w-0.5 bg-primary rounded-full z-40" />
+                                )}
                                 <button
                                   onClick={() => navigateToPage(i)}
                                   onContextMenu={(e) => {
                                     e.preventDefault()
                                     setContextMenu({ x: e.clientX, y: e.clientY, pageIndex: i })
                                   }}
-                                  className={`relative h-16 rounded-lg overflow-hidden border-2 transition-all ${i === editCurrentPage ? "border-primary ring-1 ring-primary/30" : "border-border hover:border-ring"
-                                    } ${lockedPages.has(i) ? "opacity-60" : ""}`}
+                                  className={`relative h-16 rounded-lg overflow-hidden border-2 transition-all cursor-grab active:cursor-grabbing ${i === editCurrentPage ? "border-primary ring-1 ring-primary/30" : "border-border hover:border-ring"
+                                    } ${lockedPages.has(i) ? "opacity-60 cursor-not-allowed" : ""}`}
                                   style={{ width: `${Math.round(64 * (page.width / page.height))}px` }}
                                 >
-                                  <img src={`data:image/png;base64,${page.editedImageBase64 || page.originalImageBase64}`} alt={`Page ${page.pageNumber}`} className="w-full h-full object-contain" />
+                                  <img src={`data:image/png;base64,${page.editedImageBase64 || page.originalImageBase64}`} alt={`Page ${page.pageNumber}`} className="w-full h-full object-contain pointer-events-none" />
                                   {page.editedImageBase64 && <div className="absolute top-0.5 right-0.5 w-2 h-2 bg-indigo-500 rounded-full" />}
                                   {lockedPages.has(i) && <Lock className="absolute top-0.5 left-0.5 w-3 h-3 text-yellow-500" />}
                                   <span className="absolute bottom-0 left-0 right-0 text-center text-[9px] text-white bg-black/60 py-0.5">{page.pageNumber}</span>
@@ -2542,22 +3710,6 @@ export default function ConvertPage() {
                                   </button>
                                 </div>
                               )}
-                              {/* Logo preview overlay */}
-                              {logoImage && (
-                                <img
-                                  src={`data:image/png;base64,${logoImage}`}
-                                  alt="logo preview"
-                                  draggable={false}
-                                  onMouseDown={handleLogoDragStart}
-                                  className="absolute z-20 cursor-grab active:cursor-grabbing rounded-sm ring-2 ring-transparent hover:ring-indigo-400/60 transition-shadow"
-                                  style={{
-                                    left: `${logoPosition.x}%`,
-                                    top: `${logoPosition.y}%`,
-                                    width: `${logoScale}%`,
-                                    opacity: logoOpacity / 100,
-                                  }}
-                                />
-                              )}
                             </div>
                           </div>
                         )}
@@ -2569,48 +3721,75 @@ export default function ConvertPage() {
                               <canvas
                                 ref={drawCanvasRef}
                                 className="w-full h-full rounded-lg shadow-2xl border border-gray-800 select-none"
-                                style={{ cursor: directTool === "text" ? "text" : directTool === "eraser" ? "cell" : "crosshair" }}
+                                style={{ cursor: draggingTextIndex !== null ? "grabbing" : directTool === "text" ? "text" : directTool === "eraser" ? "cell" : "crosshair" }}
                                 onMouseDown={handleDirectMouseDown}
                                 onMouseMove={handleDirectMouseMove}
                                 onMouseUp={handleDirectMouseUp}
-                                onMouseLeave={() => { isDirectDrawingRef.current = false; lastDrawPointRef.current = null }}
+                                onMouseLeave={() => {
+                                  isDirectDrawingRef.current = false
+                                  lastDrawPointRef.current = null
+                                  // Reset text drag state on leave
+                                  if (draggingTextIndex !== null) {
+                                    setDraggingTextIndex(null)
+                                    dragStartPosRef.current = null
+                                    dragOriginalTextPosRef.current = null
+                                    isDragMovedRef.current = false
+                                    canvasSnapshotRef.current = null
+                                  }
+                                }}
                               />
-                              {/* Text input overlay */}
+                              {/* Text input hint overlay */}
                               {directTextInput && (
+                                <div className="absolute top-3 left-3 z-10 px-3 py-1.5 bg-gray-900/80 backdrop-blur-sm rounded-lg text-xs text-gray-300 pointer-events-none">
+                                  입력 중... (Enter: 확인, ESC: 취소)
+                                </div>
+                              )}
+                              {/* Text drag hint overlay */}
+                              {draggingTextIndex !== null && (
+                                <div className="absolute top-3 left-3 z-10 px-3 py-1.5 bg-emerald-900/80 backdrop-blur-sm rounded-lg text-xs text-emerald-300 pointer-events-none">
+                                  드래그: 이동 | 클릭: 편집 | Del: 삭제
+                                </div>
+                              )}
+                              {/* Selection rectangle overlay */}
+                              {selectionRect && directTool === "select" && drawCanvasRef.current && (
                                 <div
-                                  className="absolute z-20"
+                                  className="absolute border-2 border-indigo-500 border-dashed pointer-events-none bg-indigo-500/10"
+                                  style={{
+                                    left: `${(selectionRect.x / drawCanvasRef.current.width) * 100}%`,
+                                    top: `${(selectionRect.y / drawCanvasRef.current.height) * 100}%`,
+                                    width: `${(selectionRect.w / drawCanvasRef.current.width) * 100}%`,
+                                    height: `${(selectionRect.h / drawCanvasRef.current.height) * 100}%`,
+                                  }}
+                                />
+                              )}
+                              {/* Hidden input for IME support (Korean, Japanese, Chinese, etc.) */}
+                              {directTextInput && (
+                                <input
+                                  ref={hiddenTextInputRef}
+                                  type="text"
+                                  value={directTextValue}
+                                  onChange={handleHiddenInputChange}
+                                  onKeyDown={handleHiddenInputKeyDown}
+                                  onCompositionStart={() => setIsComposing(true)}
+                                  onCompositionEnd={() => setIsComposing(false)}
+                                  onBlur={() => {
+                                    // Re-focus if still in text input mode
+                                    if (directTextInput && hiddenTextInputRef.current) {
+                                      setTimeout(() => hiddenTextInputRef.current?.focus(), 0)
+                                    }
+                                  }}
+                                  className="absolute opacity-0 pointer-events-auto"
                                   style={{
                                     left: `${(directTextInput.x / (drawCanvasRef.current?.width || 1)) * 100}%`,
                                     top: `${(directTextInput.y / (drawCanvasRef.current?.height || 1)) * 100}%`,
+                                    width: "1px",
+                                    height: "1px",
                                   }}
-                                  onMouseDown={(e) => e.stopPropagation()}
-                                >
-                                  <div className="flex items-center gap-1 shadow-2xl">
-                                    <input
-                                      value={directTextValue}
-                                      onChange={(e) => setDirectTextValue(e.target.value)}
-                                      onKeyDown={(e) => {
-                                        if (e.key === "Enter") addDirectText()
-                                        if (e.key === "Escape") setDirectTextInput(null)
-                                      }}
-                                      autoFocus
-                                      placeholder="텍스트 입력"
-                                      className="px-2 py-1.5 bg-white text-black text-sm border-2 border-emerald-500 rounded-lg outline-none min-w-[140px] max-w-[300px] shadow-lg"
-                                    />
-                                    <button
-                                      onMouseDown={(e) => { e.preventDefault(); addDirectText() }}
-                                      className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg shadow-lg text-sm font-bold"
-                                    >
-                                      ✓
-                                    </button>
-                                    <button
-                                      onMouseDown={(e) => { e.preventDefault(); setDirectTextInput(null) }}
-                                      className="px-2 py-1.5 bg-gray-700 hover:bg-gray-600 text-white rounded-lg shadow-lg text-sm"
-                                    >
-                                      ✕
-                                    </button>
-                                  </div>
-                                </div>
+                                  autoComplete="off"
+                                  autoCorrect="off"
+                                  autoCapitalize="off"
+                                  spellCheck={false}
+                                />
                               )}
                               {editPageData?.editedImageBase64 && (
                                 <div className="absolute top-3 right-3 flex gap-2">
@@ -2676,63 +3855,6 @@ export default function ConvertPage() {
                               {eyedropperMode && <p className="text-xs text-indigo-300 mt-2 ml-7">PDF 이미지를 클릭하여 색상을 추출하세요</p>}
                             </div>
 
-                            {/* Logo overlay panel */}
-                            <div className="border border-border/50 rounded-xl bg-card/50 p-4 space-y-3">
-                              <div className="flex items-center gap-3">
-                                <ImagePlus className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-                                <span className="text-sm font-medium text-foreground flex-shrink-0">로고</span>
-                                {logoImage ? (
-                                  <>
-                                    <img src={`data:image/png;base64,${logoImage}`} alt="logo" className="w-8 h-8 rounded-md border border-border object-contain bg-white flex-shrink-0" />
-                                    <span className="text-xs text-muted-foreground truncate max-w-[120px]">{logoFileName}</span>
-                                    <button onClick={() => { setLogoImage(null); setLogoFileName("") }} className="text-muted-foreground hover:text-red-400 transition-colors flex-shrink-0"><X className="w-3.5 h-3.5" /></button>
-                                  </>
-                                ) : (
-                                  <button onClick={() => logoInputRef.current?.click()} className="px-3 py-1.5 text-xs text-muted-foreground border border-dashed border-border hover:border-ring hover:text-foreground rounded-lg transition-colors">
-                                    이미지 업로드
-                                  </button>
-                                )}
-                                <input ref={logoInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleLogoFile(f) }} />
-                              </div>
-                              {logoImage && (
-                                <>
-                                  <div className="flex items-center gap-3 ml-7">
-                                    <span className="text-xs text-muted-foreground flex-shrink-0 w-8">위치</span>
-                                    {([
-                                      { label: "↖ 좌상", x: logoMargin, y: logoMargin },
-                                      { label: "↗ 우상", x: 100 - logoScale - logoMargin, y: logoMargin },
-                                      { label: "↙ 좌하", x: logoMargin, y: 100 - logoScale * logoNaturalRatio * (editPageData ? editPageData.width / editPageData.height : 1) - logoMargin },
-                                      { label: "↘ 우하", x: 100 - logoScale - logoMargin, y: 100 - logoScale * logoNaturalRatio * (editPageData ? editPageData.width / editPageData.height : 1) - logoMargin },
-                                    ]).map(({ label, x, y }) => (
-                                      <button
-                                        key={label}
-                                        onClick={() => setLogoPosition({ x, y })}
-                                        className="px-2 py-1 text-xs rounded-md transition-all text-muted-foreground border border-border hover:border-ring hover:text-foreground"
-                                      >
-                                        {label}
-                                      </button>
-                                    ))}
-                                    <span className="text-xs text-muted-foreground/60 ml-1">| 드래그로 자유 배치</span>
-                                  </div>
-                                  <div className="flex items-center gap-4 ml-7">
-                                    <div className="flex items-center gap-2">
-                                      <span className="text-xs text-muted-foreground">크기</span>
-                                      <input type="range" min="3" max="30" value={logoScale} onChange={(e) => setLogoScale(Number(e.target.value))} className="w-16 accent-indigo-500" />
-                                      <span className="text-xs text-foreground w-8">{logoScale}%</span>
-                                    </div>
-                                    <div className="flex items-center gap-2">
-                                      <span className="text-xs text-muted-foreground">투명도</span>
-                                      <input type="range" min="10" max="100" value={logoOpacity} onChange={(e) => setLogoOpacity(Number(e.target.value))} className="w-16 accent-indigo-500" />
-                                      <span className="text-xs text-foreground w-8">{logoOpacity}%</span>
-                                    </div>
-                                    <div className="flex-1" />
-                                    <button onClick={applyLogoCurrent} disabled={editProcessing} className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white text-xs font-semibold rounded-lg transition-all flex-shrink-0">현재 페이지</button>
-                                    <button onClick={applyLogoAll} disabled={editProcessing} className="px-3 py-1.5 bg-purple-600 hover:bg-purple-500 disabled:opacity-40 text-white text-xs font-semibold rounded-lg transition-all flex-shrink-0">전체 적용</button>
-                                  </div>
-                                </>
-                              )}
-                            </div>
-
                             {/* Prompt panel */}
                             <div className="border border-border rounded-xl bg-card overflow-hidden">
                               <div className="p-4 space-y-3">
@@ -2773,6 +3895,7 @@ export default function ConvertPage() {
                             <div className="flex items-center gap-3 flex-wrap">
                               {/* Tool buttons */}
                               {([
+                                { tool: "select" as const, icon: MousePointer2, label: "선택" },
                                 { tool: "draw" as const, icon: Pencil, label: "그리기" },
                                 { tool: "eraser" as const, icon: Eraser, label: "지우개" },
                                 { tool: "text" as const, icon: Type, label: "텍스트" },
@@ -2806,19 +3929,118 @@ export default function ConvertPage() {
                                 <span className="text-xs text-foreground w-6">{drawSize}</span>
                               </div>
 
-                              {/* Text size (only when text tool) */}
+                              {/* Background color picker (for eraser) */}
+                              {directTool === "eraser" && (
+                                <>
+                                  <div className="w-px h-6 bg-border" />
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-xs text-muted-foreground">배경색</span>
+                                    <div className="w-6 h-6 rounded-md border border-border flex-shrink-0" style={{ backgroundColor: bgColor }} />
+                                    <label className="w-6 h-6 rounded-md border border-border hover:border-ring cursor-pointer overflow-hidden flex-shrink-0" title="배경색 선택">
+                                      <input type="color" value={bgColor} onChange={(e) => setBgColor(e.target.value.toUpperCase())} className="w-8 h-8 -mt-1 -ml-1 cursor-pointer" />
+                                    </label>
+                                    <button
+                                      onClick={startEyedropper}
+                                      className={`w-6 h-6 flex items-center justify-center rounded-md border transition-all flex-shrink-0 ${eyedropperMode ? "border-indigo-500 bg-indigo-500/20 text-indigo-400" : "border-border hover:border-ring text-muted-foreground hover:text-foreground"}`}
+                                      title="스포이드"
+                                    >
+                                      <Pipette className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                </>
+                              )}
+
+                              {/* Text options (only when text tool) */}
                               {directTool === "text" && (
                                 <>
                                   <div className="w-px h-6 bg-border" />
                                   <div className="flex items-center gap-2">
-                                    <span className="text-xs text-muted-foreground">글자</span>
+                                    <span className="text-xs text-muted-foreground">크기</span>
                                     <input type="range" min="12" max="72" value={directTextSize} onChange={(e) => setDirectTextSize(Number(e.target.value))} className="w-20 accent-emerald-500" />
                                     <span className="text-xs text-foreground w-6">{directTextSize}</span>
+                                  </div>
+                                  <div className="w-px h-6 bg-border" />
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-xs text-muted-foreground">폰트</span>
+                                    <select
+                                      value={directTextFontFamily}
+                                      onChange={(e) => setDirectTextFontFamily(e.target.value)}
+                                      className="text-xs bg-secondary border border-border rounded-lg px-2 py-1 text-foreground"
+                                    >
+                                      {DIRECT_FONTS.map((font) => (
+                                        <option key={font.value} value={font.value}>{font.label}</option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                </>
+                              )}
+
+                              {/* Selection actions (only when select tool and selection exists) */}
+                              {directTool === "select" && selectionRect && (
+                                <>
+                                  <div className="w-px h-6 bg-border" />
+                                  <div className="flex items-center gap-1">
+                                    <button
+                                      onClick={cutDirectSelection}
+                                      className="flex items-center gap-1 px-2 py-1.5 text-xs font-medium rounded-lg transition-all text-muted-foreground hover:text-foreground border border-border hover:border-ring"
+                                      title="잘라내기 (배경색으로 채움)"
+                                    >
+                                      <Scissors className="w-3.5 h-3.5" />
+                                      잘라내기
+                                    </button>
+                                    <button
+                                      onClick={copyDirectSelection}
+                                      className="flex items-center gap-1 px-2 py-1.5 text-xs font-medium rounded-lg transition-all text-muted-foreground hover:text-foreground border border-border hover:border-ring"
+                                      title="복사"
+                                    >
+                                      <Copy className="w-3.5 h-3.5" />
+                                      복사
+                                    </button>
+                                    <button
+                                      onClick={deleteDirectSelection}
+                                      className="flex items-center gap-1 px-2 py-1.5 text-xs font-medium rounded-lg transition-all text-red-400 hover:text-red-300 border border-red-500/50 hover:border-red-400"
+                                      title="삭제 (배경색으로 채움)"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                      삭제
+                                    </button>
+                                    {selectionClipboardRef.current && (
+                                      <button
+                                        onClick={pasteDirectSelection}
+                                        className="flex items-center gap-1 px-2 py-1.5 text-xs font-medium rounded-lg transition-all text-indigo-400 hover:text-indigo-300 border border-indigo-500/50 hover:border-indigo-400"
+                                        title="붙여넣기"
+                                      >
+                                        <Clipboard className="w-3.5 h-3.5" />
+                                        붙여넣기
+                                      </button>
+                                    )}
                                   </div>
                                 </>
                               )}
 
                               <div className="flex-1" />
+
+                              {/* Undo button */}
+                              <button
+                                onClick={() => performUndo()}
+                                disabled={undoCount >= 0 && !(undoHistoryRef.current.get(editCurrentPage)?.length ?? 0)}
+                                className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg transition-all text-muted-foreground hover:text-foreground border border-border hover:border-ring disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-border disabled:hover:text-muted-foreground"
+                                title="실행 취소 (Ctrl+Z / Cmd+Z)"
+                              >
+                                <Undo2 className="w-4 h-4" />
+                                실행 취소
+                              </button>
+
+                              {/* Redo button */}
+                              <button
+                                onClick={() => performRedo()}
+                                disabled={undoCount >= 0 && !(redoHistoryRef.current.get(editCurrentPage)?.length ?? 0)}
+                                className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg transition-all text-muted-foreground hover:text-foreground border border-border hover:border-ring disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-border disabled:hover:text-muted-foreground"
+                                title="다시 실행 (Ctrl+Shift+Z / Cmd+Shift+Z)"
+                              >
+                                <Redo2 className="w-4 h-4" />
+                                다시 실행
+                              </button>
 
                               {/* Save button */}
                               <button
@@ -2829,6 +4051,75 @@ export default function ConvertPage() {
                                 적용
                               </button>
                             </div>
+                          </div>
+                        )}
+
+                        {/* Direct Mode: Logo Panel */}
+                        {editSubMode === "direct" && (
+                          <div className="border border-border rounded-xl bg-card p-3 space-y-3">
+                            <div className="flex items-center gap-3">
+                              <ImagePlus className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                              <span className="text-sm font-medium text-foreground flex-shrink-0">로고/이미지</span>
+                              {logoImage ? (
+                                <>
+                                  <img src={`data:image/png;base64,${logoImage}`} alt="logo" className="w-8 h-8 rounded-md border border-border object-contain bg-white flex-shrink-0" />
+                                  <span className="text-xs text-muted-foreground truncate max-w-[120px]">{logoFileName}</span>
+                                  <button onClick={() => { setLogoImage(null); setLogoFileName("") }} className="text-muted-foreground hover:text-red-400 transition-colors flex-shrink-0"><X className="w-3.5 h-3.5" /></button>
+                                </>
+                              ) : (
+                                <div className="flex gap-2">
+                                  <button onClick={() => logoInputRef.current?.click()} className="px-3 py-1.5 text-xs text-muted-foreground border border-dashed border-border hover:border-ring hover:text-foreground rounded-lg transition-colors">
+                                    파일 업로드
+                                  </button>
+                                  {authUser && (
+                                    <button
+                                      onClick={() => { setShowImagePanel(true); imageStorage.fetchImages() }}
+                                      className="px-3 py-1.5 text-xs text-indigo-400 border border-indigo-500/50 hover:border-indigo-400 hover:text-indigo-300 rounded-lg transition-colors"
+                                    >
+                                      보관함
+                                    </button>
+                                  )}
+                                </div>
+                              )}
+                              <input ref={logoInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleLogoFile(f) }} />
+                            </div>
+                            {logoImage && (
+                              <>
+                                <div className="flex items-center gap-3 ml-7">
+                                  <span className="text-xs text-muted-foreground flex-shrink-0 w-8">위치</span>
+                                  {([
+                                    { label: "↖ 좌상", x: logoMargin, y: logoMargin },
+                                    { label: "↗ 우상", x: 100 - logoScale - logoMargin, y: logoMargin },
+                                    { label: "↙ 좌하", x: logoMargin, y: 100 - logoScale * logoNaturalRatio * (editPageData ? editPageData.width / editPageData.height : 1) - logoMargin },
+                                    { label: "↘ 우하", x: 100 - logoScale - logoMargin, y: 100 - logoScale * logoNaturalRatio * (editPageData ? editPageData.width / editPageData.height : 1) - logoMargin },
+                                  ]).map(({ label, x, y }) => (
+                                    <button
+                                      key={label}
+                                      onClick={() => setLogoPosition({ x, y })}
+                                      className="px-2 py-1 text-xs rounded-md transition-all text-muted-foreground border border-border hover:border-ring hover:text-foreground"
+                                    >
+                                      {label}
+                                    </button>
+                                  ))}
+                                  <span className="text-xs text-muted-foreground/60 ml-1">| 드래그로 자유 배치</span>
+                                </div>
+                                <div className="flex items-center gap-4 ml-7">
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-xs text-muted-foreground">크기</span>
+                                    <input type="range" min="3" max="30" value={logoScale} onChange={(e) => setLogoScale(Number(e.target.value))} className="w-16 accent-emerald-500" />
+                                    <span className="text-xs text-foreground w-8">{logoScale}%</span>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-xs text-muted-foreground">투명도</span>
+                                    <input type="range" min="10" max="100" value={logoOpacity} onChange={(e) => setLogoOpacity(Number(e.target.value))} className="w-16 accent-emerald-500" />
+                                    <span className="text-xs text-foreground w-8">{logoOpacity}%</span>
+                                  </div>
+                                  <div className="flex-1" />
+                                  <button onClick={applyLogoCurrent} disabled={editProcessing} className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white text-xs font-semibold rounded-lg transition-all flex-shrink-0">현재 페이지</button>
+                                  <button onClick={applyLogoAll} disabled={editProcessing} className="px-3 py-1.5 bg-purple-600 hover:bg-purple-500 disabled:opacity-40 text-white text-xs font-semibold rounded-lg transition-all flex-shrink-0">전체 적용</button>
+                                </div>
+                              </>
+                            )}
                           </div>
                         )}
 
@@ -2848,9 +4139,8 @@ export default function ConvertPage() {
 
       {/* Fullscreen Floating Toolbar - auto-hide */}
       {isFullscreen && (
-        <div className={`fixed top-4 left-1/2 -translate-x-1/2 z-[90] flex items-center gap-2 px-4 py-2 bg-black/80 backdrop-blur-md border border-white/10 rounded-full shadow-2xl transition-all duration-300 ${
-          showFullscreenToolbar ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-4 pointer-events-none"
-        }`}>
+        <div className={`fixed top-4 left-1/2 -translate-x-1/2 z-[90] flex items-center gap-2 px-4 py-2 bg-black/80 backdrop-blur-md border border-white/10 rounded-full shadow-2xl transition-all duration-300 ${showFullscreenToolbar ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-4 pointer-events-none"
+          }`}>
           <button
             onClick={() => setIsFullscreen(false)}
             className="flex items-center gap-2 px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground hover:bg-secondary rounded-lg transition-all"
@@ -2914,13 +4204,12 @@ export default function ConvertPage() {
       {/* Save Feedback Animation */}
       {saveAnimation !== "idle" && (
         <div className="fixed inset-0 z-[95] pointer-events-none flex items-center justify-center">
-          <div className={`flex flex-col items-center gap-3 px-8 py-6 rounded-2xl backdrop-blur-xl transition-all duration-500 ${
-            saveAnimation === "saving"
-              ? "bg-indigo-500/20 border border-indigo-500/30 scale-100 opacity-100"
-              : saveAnimation === "success"
-                ? "bg-emerald-500/20 border border-emerald-500/30 scale-110 opacity-100"
-                : "bg-red-500/20 border border-red-500/30 scale-100 opacity-100"
-          }`}>
+          <div className={`flex flex-col items-center gap-3 px-8 py-6 rounded-2xl backdrop-blur-xl transition-all duration-500 ${saveAnimation === "saving"
+            ? "bg-indigo-500/20 border border-indigo-500/30 scale-100 opacity-100"
+            : saveAnimation === "success"
+              ? "bg-emerald-500/20 border border-emerald-500/30 scale-110 opacity-100"
+              : "bg-red-500/20 border border-red-500/30 scale-100 opacity-100"
+            }`}>
             {saveAnimation === "saving" && (
               <>
                 <Loader2 className="w-10 h-10 text-indigo-400 animate-spin" />
@@ -3048,39 +4337,70 @@ export default function ConvertPage() {
       )}
 
       {/* Floating Progress Bar */}
-        {progressInfo && (
-          <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 w-full max-w-sm px-4">
-            <div className="bg-gray-900/95 backdrop-blur-md border border-gray-700/60 rounded-2xl shadow-2xl shadow-black/40 px-5 py-4 space-y-2.5">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2.5">
-                  <Loader2 className={`w-4 h-4 text-indigo-400 ${progressInfo.percent < 100 ? "animate-spin" : "hidden"}`} />
-                  {progressInfo.percent >= 100 && <CheckCircle className="w-4 h-4 text-emerald-400" />}
-                  <span className="text-sm font-medium text-gray-200">{progressInfo.label}</span>
-                </div>
-                <span className="text-xs font-mono text-gray-400">{progressInfo.percent}%</span>
+      {progressInfo && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 w-full max-w-sm px-4">
+          <div className="bg-gray-900/95 backdrop-blur-md border border-gray-700/60 rounded-2xl shadow-2xl shadow-black/40 px-5 py-4 space-y-2.5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <Loader2 className={`w-4 h-4 text-indigo-400 ${progressInfo.percent < 100 ? "animate-spin" : "hidden"}`} />
+                {progressInfo.percent >= 100 && <CheckCircle className="w-4 h-4 text-emerald-400" />}
+                <span className="text-sm font-medium text-gray-200">{progressInfo.label}</span>
               </div>
-              <div className="h-1.5 bg-gray-800 rounded-full overflow-hidden">
-                <div
-                  className="h-full rounded-full transition-all duration-500 ease-out"
-                  style={{
-                    width: `${progressInfo.percent}%`,
-                    background: progressInfo.percent >= 100
-                      ? "linear-gradient(90deg, #34d399, #10b981)"
-                      : "linear-gradient(90deg, #818cf8, #a78bfa, #818cf8)",
-                    backgroundSize: progressInfo.percent < 100 ? "200% 100%" : undefined,
-                    animation: progressInfo.percent < 100 ? "shimmer 2s linear infinite" : undefined,
-                  }}
-                />
-              </div>
+              <span className="text-xs font-mono text-gray-400">{progressInfo.percent}%</span>
+            </div>
+            <div className="h-1.5 bg-gray-800 rounded-full overflow-hidden">
+              <div
+                className="h-full rounded-full transition-all duration-500 ease-out"
+                style={{
+                  width: `${progressInfo.percent}%`,
+                  background: progressInfo.percent >= 100
+                    ? "linear-gradient(90deg, #34d399, #10b981)"
+                    : "linear-gradient(90deg, #818cf8, #a78bfa, #818cf8)",
+                  backgroundSize: progressInfo.percent < 100 ? "200% 100%" : undefined,
+                  animation: progressInfo.percent < 100 ? "shimmer 2s linear infinite" : undefined,
+                }}
+              />
             </div>
           </div>
-        )}
-        <style jsx>{`
+        </div>
+      )}
+
+      {/* Image Storage Panel */}
+      <ImagePanel
+        isOpen={showImagePanel}
+        images={imageStorage.images}
+        loading={imageStorage.loading}
+        uploading={imageStorage.uploading}
+        onClose={() => setShowImagePanel(false)}
+        onUpload={imageStorage.uploadImage}
+        onDelete={imageStorage.deleteImage}
+        onSelect={async (url) => {
+          // Load image from URL and set as logo
+          try {
+            const res = await fetch(url)
+            const blob = await res.blob()
+            const reader = new FileReader()
+            reader.onload = (e) => {
+              const base64 = (e.target?.result as string)?.split(",")[1]
+              if (base64) {
+                setLogoImage(base64)
+                setLogoFileName(url.split("/").pop() || "image")
+              }
+            }
+            reader.readAsDataURL(blob)
+            setShowImagePanel(false)
+          } catch {
+            // ignore
+          }
+        }}
+      />
+
+      <style jsx>{`
           @keyframes shimmer {
             0% { background-position: 200% 0; }
             100% { background-position: -200% 0; }
           }
         `}</style>
-      </div>
-      )
+    </div>
+  )
 }
