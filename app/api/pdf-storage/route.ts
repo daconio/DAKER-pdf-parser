@@ -3,6 +3,29 @@ import { createClient } from "@supabase/supabase-js"
 
 const BUCKET_NAME = "pdf-files"
 
+/** Encode a user-facing filename into a Supabase-safe storage key segment. */
+function encodeFileName(fileName: string): string {
+  const baseName = fileName.replace(/\.pdf$/i, "")
+  return `${Buffer.from(baseName, "utf-8").toString("base64url")}.pdf`
+}
+
+/**
+ * Decode a storage key segment back into the original user-facing filename.
+ * Handles both new base64url-encoded keys and legacy raw ASCII keys.
+ */
+function decodeFileName(storageFileName: string): string {
+  const withoutTimestamp = storageFileName.replace(/^\d+_/, "")
+  const encoded = withoutTimestamp.replace(/\.pdf$/i, "")
+  if (!encoded) return ".pdf"
+  try {
+    const decoded = Buffer.from(encoded, "base64url").toString("utf-8")
+    if (Buffer.from(decoded, "utf-8").toString("base64url") === encoded) {
+      return `${decoded}.pdf`
+    }
+  } catch { /* not base64url */ }
+  return withoutTimestamp
+}
+
 // Service role client for storage operations (bypasses RLS)
 function getServiceClient() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ""
@@ -40,7 +63,8 @@ export async function POST(request: NextRequest) {
     const fileName = formData.get("fileName") as string | null
     if (!file || !fileName) return NextResponse.json({ error: "파일이 필요합니다." }, { status: 400 })
 
-    const filePath = `${user.id}/${Date.now()}_${fileName}`
+    const safeName = encodeFileName(fileName)
+    const filePath = `${user.id}/${Date.now()}_${safeName}`
     const arrayBuffer = await file.arrayBuffer()
     const uint8Array = new Uint8Array(arrayBuffer)
 
@@ -73,7 +97,7 @@ export async function GET(request: NextRequest) {
     const pdfFiles = (files || [])
       .filter((f) => f.name.endsWith(".pdf"))
       .map((f) => ({
-        name: f.name.replace(/^\d+_/, ""),
+        name: decodeFileName(f.name),
         path: `${user.id}/${f.name}`,
         createdAt: f.created_at,
         size: f.metadata?.size || 0,

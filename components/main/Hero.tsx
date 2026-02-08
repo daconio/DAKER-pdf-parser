@@ -172,7 +172,7 @@ export default function Hero() {
 
     for (let i = coordsIndexes.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1))
-      ;[coordsIndexes[i], coordsIndexes[j]] = [coordsIndexes[j], coordsIndexes[i]]
+        ;[coordsIndexes[i], coordsIndexes[j]] = [coordsIndexes[j], coordsIndexes[i]]
     }
 
     for (const coordIndex of coordsIndexes) {
@@ -277,33 +277,34 @@ export default function Hero() {
   }, [])
 
   return (
-    <section className="relative min-h-screen bg-black overflow-hidden flex items-center justify-center">
+    <section className="relative min-h-screen bg-background overflow-hidden flex items-center justify-center">
       {/* Particle Canvas Background */}
       <canvas
         ref={canvasRef}
-        className="absolute inset-0 w-full h-full opacity-70"
+        className="absolute inset-0 w-full h-full opacity-70 dark:opacity-50"
         style={{ maxWidth: "100%", height: "100%" }}
       />
 
       {/* Gradient Overlay - 상단/하단만 살짝 */}
-      <div className="absolute inset-0 bg-gradient-to-b from-black/50 via-transparent to-black/60 pointer-events-none" />
+      <div className="absolute inset-0 bg-gradient-to-b from-background/50 via-transparent to-background/60 pointer-events-none" />
 
       {/* Header + CTA */}
       <header
-        className={`absolute top-0 left-0 right-0 z-20 px-6 py-5 md:px-10 md:py-6 flex items-center justify-between transition-all duration-1000 ${
-          isVisible ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-4"
-        }`}
+        className={`absolute top-0 left-0 right-0 z-20 px-6 py-4 md:px-10 md:py-6 flex items-center justify-between transition-all duration-1000 ${isVisible ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-4"
+          }`}
       >
         <div>
-          <h1 className="text-2xl md:text-3xl font-bold text-white leading-tight tracking-tight">
-            <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 via-purple-400 to-blue-400">
-              DAKER
-            </span>{" "}
-            <span className="text-white/90">PDF Parser</span>
+          <h1 className="text-xl md:text-3xl font-bold text-foreground leading-tight tracking-tight flex items-center gap-2">
+            <img
+              src="https://r2-images.dacon.co.kr/external/DAKER.svg"
+              alt="DAKER"
+              className="h-6 md:h-10 w-auto"
+            />
+            <span className="text-foreground/90">PDF Parser</span>
           </h1>
           <div className="flex items-center gap-2 mt-1">
-            <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse" />
-            <span className="text-indigo-300/70 text-xs font-medium tracking-wide">
+            <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
+            <span className="text-muted-foreground text-xs font-medium tracking-wide">
               Powered by AI
             </span>
           </div>
@@ -312,7 +313,7 @@ export default function Hero() {
         <div className="flex items-center gap-3">
           <Link
             href="/convert"
-            className="group px-5 py-2.5 bg-white/5 hover:bg-white/10 border border-white/15 hover:border-white/25 text-white text-sm font-semibold rounded-full backdrop-blur-sm transition-all duration-300 hover:shadow-lg hover:shadow-white/5"
+            className="group px-5 py-2.5 bg-secondary/80 hover:bg-secondary border border-border hover:border-ring text-secondary-foreground text-sm font-semibold rounded-full backdrop-blur-sm transition-all duration-300 hover:shadow-lg hover:shadow-primary/5"
           >
             <span className="flex items-center gap-2">
               무료로 시작하기
@@ -322,20 +323,20 @@ export default function Hero() {
             </span>
           </Link>
           {authLoading ? (
-            <div className="w-[120px] h-[40px] rounded-full bg-gray-800/40 animate-pulse" />
+            <div className="w-[120px] h-[40px] rounded-full bg-muted animate-pulse" />
           ) : authUser ? (
             <Link
               href="/convert"
-              className="flex items-center gap-2 pl-2 pr-4 py-1.5 bg-white/5 border border-white/10 rounded-full backdrop-blur-sm hover:bg-white/10 hover:border-white/20 transition-all duration-300"
+              className="flex items-center gap-2 pl-2 pr-4 py-1.5 bg-secondary/80 border border-border rounded-full backdrop-blur-sm hover:bg-secondary hover:border-ring transition-all duration-300"
             >
               {authUser.user_metadata?.avatar_url ? (
-                <img src={authUser.user_metadata.avatar_url} alt="" className="w-7 h-7 rounded-full ring-2 ring-indigo-500/40" />
+                <img src={authUser.user_metadata.avatar_url} alt="" className="w-7 h-7 rounded-full ring-2 ring-primary/40" />
               ) : (
-                <div className="w-7 h-7 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white text-xs font-bold">
+                <div className="w-7 h-7 rounded-full bg-gradient-to-br from-primary to-purple-600 flex items-center justify-center text-primary-foreground text-xs font-bold">
                   {(authUser.user_metadata?.full_name || authUser.email || "U")[0].toUpperCase()}
                 </div>
               )}
-              <span className="text-xs text-white/80 font-medium max-w-[80px] truncate">
+              <span className="text-xs text-secondary-foreground font-medium max-w-[80px] truncate">
                 {authUser.user_metadata?.full_name || authUser.email?.split("@")[0]}
               </span>
             </Link>
@@ -347,7 +348,7 @@ export default function Hero() {
                   options: { redirectTo: `${window.location.origin}/auth/callback` },
                 })
               }}
-              className="group flex items-center gap-2.5 pl-3 pr-5 py-2 bg-white hover:bg-gray-50 text-gray-700 text-sm font-semibold rounded-full shadow-lg shadow-black/20 hover:shadow-xl hover:shadow-black/30 border border-white/80 transition-all duration-300 hover:scale-[1.03] active:scale-[0.98]"
+              className="group flex items-center gap-2.5 pl-3 pr-5 py-2 bg-background hover:bg-muted text-foreground text-sm font-semibold rounded-full shadow-lg shadow-black/5 hover:shadow-xl hover:shadow-black/10 border border-border transition-all duration-300 hover:scale-[1.03] active:scale-[0.98]"
             >
               <svg className="w-4.5 h-4.5 flex-shrink-0" viewBox="0 0 24 24">
                 <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#4285F4" />
@@ -363,11 +364,10 @@ export default function Hero() {
 
       {/* Bottom Description */}
       <div
-        className={`absolute bottom-0 left-0 right-0 z-10 text-center px-6 pb-12 md:pb-16 transition-all duration-1000 delay-300 ${
-          isVisible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-8"
-        }`}
+        className={`absolute bottom-0 left-0 right-0 z-10 text-center px-6 pb-12 md:pb-16 transition-all duration-1000 delay-300 ${isVisible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-8"
+          }`}
       >
-        <p className="text-lg md:text-xl text-gray-300/80 leading-relaxed">
+        <p className="text-lg md:text-xl text-muted-foreground leading-relaxed">
           AI가 PDF 문서를 자동으로 분석하고 변환합니다.
           <br className="hidden md:block" />
           복잡한 표, 이미지, 텍스트를 정확하게 추출하세요.
