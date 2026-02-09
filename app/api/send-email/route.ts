@@ -219,17 +219,18 @@ export async function GET(request: NextRequest) {
       .order("sent_at", { ascending: false })
       .range(offset, offset + limit - 1)
 
+    // Return empty array if table doesn't exist or other error
     if (error) {
-      throw error
+      console.error("Email history query error:", error)
+      // Return empty array instead of error (table might not exist yet)
+      return NextResponse.json({ emails: [] })
     }
 
-    return NextResponse.json({ emails })
+    return NextResponse.json({ emails: emails || [] })
   } catch (error) {
     console.error("Email history error:", error)
-    return NextResponse.json(
-      { error: "이메일 기록을 불러오는데 실패했습니다." },
-      { status: 500 }
-    )
+    // Return empty array on any error to avoid blocking the UI
+    return NextResponse.json({ emails: [] })
   }
 }
 
