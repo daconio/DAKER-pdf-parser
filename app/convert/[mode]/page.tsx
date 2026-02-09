@@ -3211,15 +3211,19 @@ export default function ConvertPage() {
                 {!isFullscreen && (
                   <div className="mb-6">
                     <div className="flex items-center gap-3 mb-2">
-                      <h2 className="text-3xl font-bold tracking-tight text-foreground">{currentMode.label}</h2>
-                      {isAiEdit && editFileName && (
+                      <h2 className="text-3xl font-bold tracking-tight text-foreground">
+                        {showEmailPanel ? "이메일" : currentMode.label}
+                      </h2>
+                      {!showEmailPanel && isAiEdit && editFileName && (
                         <span className="px-3 py-1 bg-primary/10 text-primary text-sm font-medium rounded-full flex items-center gap-1.5">
                           <FileText className="w-3.5 h-3.5" />
                           {editFileName}
                         </span>
                       )}
                     </div>
-                    <p className="text-muted-foreground">{currentMode.desc}</p>
+                    <p className="text-muted-foreground">
+                      {showEmailPanel ? "PDF를 이메일로 발송하고 발송 기록을 관리합니다" : currentMode.desc}
+                    </p>
                   </div>
                 )}
 
