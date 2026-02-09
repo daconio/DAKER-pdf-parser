@@ -148,15 +148,26 @@ export default function ConvertPage() {
     setShowEmailPanel(urlParams.get("panel") === "email")
   }, [])
 
-  // Listen for URL changes
+  // Listen for URL changes (browser back/forward)
   useEffect(() => {
     const handlePopState = () => {
+      // Sync email panel state
       const urlParams = new URLSearchParams(window.location.search)
       setShowEmailPanel(urlParams.get("panel") === "email")
+
+      // Sync mode state from URL path
+      const pathParts = window.location.pathname.split("/")
+      const modeSlug = pathParts[pathParts.length - 1]
+      const newMode = MODE_SLUG_MAP[modeSlug]
+      if (newMode && newMode !== mode) {
+        reset()
+        resetEdit()
+        setMode(newMode)
+      }
     }
     window.addEventListener("popstate", handlePopState)
     return () => window.removeEventListener("popstate", handlePopState)
-  }, [])
+  }, [mode])
   const [status, setStatus] = useState<ProcessStatus>(ProcessStatus.IDLE)
   const [files, setFiles] = useState<File[]>([])
   const [generatedFiles, setGeneratedFiles] = useState<GeneratedFile[]>([])
@@ -989,11 +1000,13 @@ export default function ConvertPage() {
 
   const handleModeChange = (newMode: AppMode) => {
     if (newMode === mode) return
+    // Reset states first, then change mode
     reset()
     resetEdit()
+    setShowEmailPanel(false)
     setMode(newMode)
-    setShowEmailPanel(false) // Clear email panel when changing mode
-    window.history.pushState(null, "", `/convert/${MODE_TO_SLUG[newMode]}`)
+    // Update URL without causing navigation (shallow update)
+    window.history.replaceState(null, "", `/convert/${MODE_TO_SLUG[newMode]}`)
   }
 
   // --- Convert logic ---
