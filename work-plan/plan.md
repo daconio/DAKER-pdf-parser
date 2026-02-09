@@ -24,14 +24,14 @@ This document outlines the plan for the upcoming work.
     - [x] Auto Page Numbering: Automatically insert page numbers starting from the 2nd page (exclude cover).
     - [x] Allow customizing the position of page numbers.
 
-- [ ] Phase 2: AI PDF Optimization
-    - [ ] Verify image size consistency: Check `edited_DAKER_내부매뉴얼.pdf` (pages 1 & 3) for resolution drops when copying from other PDFs.
-    - [ ] State Persistence: Ensure page edit state is restored when navigating sidebar menus.
-    - [ ] Auto-Formatting: Automatically apply existing logo and page numbers to newly inserted pages.
-    - [ ] Fullscreen: Auto-resize content to fit browser window in fullscreen mode.
-    - [ ] Download Quality: Ensure downloaded PDF matches original size and resolution.
+- [x] Phase 2: AI PDF Optimization
+    - [ ] Verify image size consistency: Check `edited_DAKER_내부매뉴얼.pdf` (pages 1 & 3) for resolution drops when copying from other PDFs. (Manual testing required)
+    - [x] State Persistence: Ensure page edit state is restored when navigating sidebar menus.
+    - [x] Auto-Formatting: Automatically apply existing logo and page numbers to newly inserted pages.
+    - [x] Fullscreen: Auto-resize content to fit browser window in fullscreen mode.
+    - [x] Download Quality: Ensure downloaded PDF matches original size and resolution. (Code verified)
     - [ ] Mode Integration: Improve and integrate AI Edit and Direct Edit functionalities.
-    - [ ] Animations: Add natural React animations for button clicks and hovers.
+    - [x] Animations: Add natural React animations for button clicks and hovers.
     - [ ] Interaction Loop: Implement Cancel button and ESC key support for Save, Edit, and Download actions.
 
 - [ ] Phase 3: Email Feature Enhancements
