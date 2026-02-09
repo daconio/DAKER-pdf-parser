@@ -62,6 +62,9 @@ export function EmailPanel({
 }: EmailPanelProps) {
   const [view, setView] = useState<PanelView>("list")
   const [recipients, setRecipients] = useState("")
+  const [ccRecipients, setCcRecipients] = useState("")
+  const [bccRecipients, setBccRecipients] = useState("")
+  const [showCcBcc, setShowCcBcc] = useState(false)
   const [subject, setSubject] = useState("")
   const [body, setBody] = useState("")
   const [attachPdf, setAttachPdf] = useState(false)
@@ -78,6 +81,9 @@ export function EmailPanel({
   useEffect(() => {
     if (view === "compose") {
       setRecipients("")
+      setCcRecipients("")
+      setBccRecipients("")
+      setShowCcBcc(false)
       setSubject("")
       setBody("")
       setAttachPdf(false)
@@ -257,9 +263,20 @@ export function EmailPanel({
               <div className="space-y-5">
                 {/* Recipients */}
                 <div>
-                  <label className="block text-sm font-medium text-muted-foreground mb-2">
-                    받는 사람 <span className="text-xs text-muted-foreground">(쉼표로 구분)</span>
-                  </label>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="block text-sm font-medium text-muted-foreground">
+                      받는 사람 <span className="text-xs text-muted-foreground">(쉼표로 구분)</span>
+                    </label>
+                    {!showCcBcc && (
+                      <button
+                        type="button"
+                        onClick={() => setShowCcBcc(true)}
+                        className="text-xs text-indigo-500 hover:text-indigo-400"
+                      >
+                        참조/숨은참조 추가
+                      </button>
+                    )}
+                  </div>
                   <input
                     type="text"
                     value={recipients}
@@ -268,6 +285,36 @@ export function EmailPanel({
                     className="w-full px-4 py-3 bg-secondary border border-border rounded-lg text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-indigo-500/30"
                   />
                 </div>
+
+                {/* CC/BCC Fields */}
+                {showCcBcc && (
+                  <>
+                    <div>
+                      <label className="block text-sm font-medium text-muted-foreground mb-2">
+                        참조 (CC)
+                      </label>
+                      <input
+                        type="text"
+                        value={ccRecipients}
+                        onChange={(e) => setCcRecipients(e.target.value)}
+                        placeholder="참조할 이메일 주소"
+                        className="w-full px-4 py-3 bg-secondary border border-border rounded-lg text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-indigo-500/30"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-muted-foreground mb-2">
+                        숨은참조 (BCC)
+                      </label>
+                      <input
+                        type="text"
+                        value={bccRecipients}
+                        onChange={(e) => setBccRecipients(e.target.value)}
+                        placeholder="숨은참조할 이메일 주소"
+                        className="w-full px-4 py-3 bg-secondary border border-border rounded-lg text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-indigo-500/30"
+                      />
+                    </div>
+                  </>
+                )}
 
                 {/* Subject */}
                 <div>
@@ -464,9 +511,20 @@ export function EmailPanel({
             <div className="space-y-4">
               {/* Recipients */}
               <div>
-                <label className="block text-sm font-medium text-muted-foreground mb-1.5">
-                  받는 사람 <span className="text-xs text-muted-foreground">(쉼표로 구분)</span>
-                </label>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-sm font-medium text-muted-foreground">
+                    받는 사람 <span className="text-xs text-muted-foreground">(쉼표로 구분)</span>
+                  </label>
+                  {!showCcBcc && (
+                    <button
+                      type="button"
+                      onClick={() => setShowCcBcc(true)}
+                      className="text-xs text-indigo-500 hover:text-indigo-400"
+                    >
+                      참조/숨은참조
+                    </button>
+                  )}
+                </div>
                 <input
                   type="text"
                   value={recipients}
@@ -475,6 +533,36 @@ export function EmailPanel({
                   className="w-full px-3 py-2 bg-secondary border border-border rounded-lg text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-indigo-500/30"
                 />
               </div>
+
+              {/* CC/BCC Fields */}
+              {showCcBcc && (
+                <>
+                  <div>
+                    <label className="block text-sm font-medium text-muted-foreground mb-1.5">
+                      참조 (CC)
+                    </label>
+                    <input
+                      type="text"
+                      value={ccRecipients}
+                      onChange={(e) => setCcRecipients(e.target.value)}
+                      placeholder="참조할 이메일 주소"
+                      className="w-full px-3 py-2 bg-secondary border border-border rounded-lg text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-indigo-500/30"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-muted-foreground mb-1.5">
+                      숨은참조 (BCC)
+                    </label>
+                    <input
+                      type="text"
+                      value={bccRecipients}
+                      onChange={(e) => setBccRecipients(e.target.value)}
+                      placeholder="숨은참조할 이메일 주소"
+                      className="w-full px-3 py-2 bg-secondary border border-border rounded-lg text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-indigo-500/30"
+                    />
+                  </div>
+                </>
+              )}
 
               {/* Subject */}
               <div>

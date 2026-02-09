@@ -646,6 +646,11 @@ export default function ConvertPage() {
             e.preventDefault()
           }
           break
+        case "Tab":
+          // Toggle between AI and Direct mode
+          e.preventDefault()
+          handleSubModeChange(editSubMode === "ai" ? "direct" : "ai")
+          break
       }
     }
     window.addEventListener("keydown", handleKeyDown)
@@ -1304,13 +1309,21 @@ export default function ConvertPage() {
     if (!promptToUse || editProcessing) return
     const page = editPages[editCurrentPage]
     if (!page) return
-    setEditProcessing(true); setError(""); setEditStatusText("AI가 페이지를 수정하고 있습니다...")
+
+    // Create abort controller for cancellation
+    const abortController = new AbortController()
+    abortControllerRef.current = abortController
+
+    setEditProcessing(true); setError(""); setEditStatusText("AI가 페이지를 수정하고 있습니다... (ESC로 취소)")
     setSaveAnimation("saving")
     try {
       const res = await fetch("/api/edit-pdf", {
-        method: "POST", headers: { "Content-Type": "application/json" },
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ imageBase64: page.editedImageBase64 || page.originalImageBase64, prompt: promptToUse }),
+        signal: abortController.signal,
       })
+      if (abortController.signal.aborted) throw new Error("cancelled")
       const data = await res.json()
       if (!res.ok) { setError(data.error || "수정에 실패했습니다."); setSaveAnimation("error"); setTimeout(() => setSaveAnimation("idle"), 2000); return }
       pushUndoSnapshot(editCurrentPage)
@@ -1320,7 +1333,20 @@ export default function ConvertPage() {
       saveImmediately(updatedPages)
       setEditPrompt(""); setEditStatusText("")
       setSaveAnimation("success"); setTimeout(() => setSaveAnimation("idle"), 1500)
-    } catch { setError("서버 연결에 실패했습니다."); setSaveAnimation("error"); setTimeout(() => setSaveAnimation("idle"), 2000) } finally { setEditProcessing(false); setEditStatusText("") }
+    } catch (err) {
+      // Don't show error if cancelled
+      if (err instanceof Error && (err.message === "cancelled" || err.name === "AbortError")) {
+        setSaveAnimation("idle")
+        return
+      }
+      setError("서버 연결에 실패했습니다.")
+      setSaveAnimation("error")
+      setTimeout(() => setSaveAnimation("idle"), 2000)
+    } finally {
+      abortControllerRef.current = null
+      setEditProcessing(false)
+      setEditStatusText("")
+    }
   }
 
   const resetEditCurrentPage = () => {
@@ -3750,21 +3776,27 @@ export default function ConvertPage() {
                               </div>
                             ))}
                           </div>
-                          {/* Mode toggle: AI vs Direct */}
+                          {/* Mode toggle: AI vs Direct (Tab to switch) */}
                           <div className="flex items-center bg-card/80 border border-border rounded-xl p-1 flex-shrink-0">
                             <button
                               onClick={() => handleSubModeChange("ai")}
-                              className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-all ${editSubMode === "ai" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
-                                }`}
-                              title="AI로 텍스트 수정 (클릭/드래그로 영역 선택)"
+                              className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-all duration-200 ${
+                                editSubMode === "ai"
+                                  ? "bg-primary text-primary-foreground shadow-sm"
+                                  : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                              }`}
+                              title="AI로 텍스트 수정 (Tab: 모드 전환)"
                             >
                               ✨ AI 수정
                             </button>
                             <button
                               onClick={() => handleSubModeChange("direct")}
-                              className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-all ${editSubMode === "direct" ? "bg-emerald-600 text-white" : "text-muted-foreground hover:text-foreground"
-                                }`}
-                              title="펜/텍스트/도형으로 직접 그리기"
+                              className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-all duration-200 ${
+                                editSubMode === "direct"
+                                  ? "bg-emerald-600 text-white shadow-sm"
+                                  : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                              }`}
+                              title="펜/텍스트/도형으로 직접 그리기 (Tab: 모드 전환)"
                             >
                               ✏️ 직접 수정
                             </button>
@@ -4390,7 +4422,7 @@ export default function ConvertPage() {
 
       {/* Save Feedback Animation */}
       {saveAnimation !== "idle" && (
-        <div className="fixed inset-0 z-[95] pointer-events-none flex items-center justify-center">
+        <div className="fixed inset-0 z-[95] flex items-center justify-center" style={{ pointerEvents: saveAnimation === "saving" ? "auto" : "none" }}>
           <div className={`flex flex-col items-center gap-3 px-8 py-6 rounded-2xl backdrop-blur-xl transition-all duration-500 ${saveAnimation === "saving"
             ? "bg-indigo-500/20 border border-indigo-500/30 scale-100 opacity-100"
             : saveAnimation === "success"
@@ -4401,6 +4433,22 @@ export default function ConvertPage() {
               <>
                 <Loader2 className="w-10 h-10 text-indigo-400 animate-spin" />
                 <span className="text-lg font-medium text-indigo-300">저장 중...</span>
+                {abortControllerRef.current && (
+                  <button
+                    onClick={() => {
+                      if (abortControllerRef.current) {
+                        abortControllerRef.current.abort()
+                        abortControllerRef.current = null
+                        setSaveAnimation("idle")
+                        setEditStatusText("취소됨")
+                        setProgressInfo(null)
+                      }
+                    }}
+                    className="mt-2 px-4 py-1.5 text-sm text-indigo-300 hover:text-white border border-indigo-400/50 hover:border-indigo-300 rounded-lg transition-all hover:bg-indigo-500/20"
+                  >
+                    취소 (ESC)
+                  </button>
+                )}
               </>
             )}
             {saveAnimation === "success" && (
