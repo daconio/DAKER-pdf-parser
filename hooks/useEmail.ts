@@ -107,24 +107,81 @@ export function useEmail({ user, getAccessToken }: UseEmailProps) {
     }
   }, [user, getAccessToken, fetchEmails])
 
-  // Send PDF as attachment
+  // Send PDF via cloud link (upload to storage, send download link)
   const sendPdfEmail = useCallback(async (
     pdfBytes: Uint8Array,
     fileName: string,
     params: Omit<SendEmailParams, "attachments">
   ): Promise<boolean> => {
-    // Convert PDF bytes to base64
-    const base64 = btoa(String.fromCharCode(...pdfBytes))
+    if (!user) {
+      setError("로그인이 필요합니다.")
+      return false
+    }
 
-    return sendEmail({
-      ...params,
-      attachments: [{
-        filename: fileName,
-        content: base64,
-        contentType: "application/pdf",
-      }],
-    })
-  }, [sendEmail])
+    setSending(true)
+    setError(null)
+
+    try {
+      const token = await getAccessToken()
+      if (!token) throw new Error("인증이 필요합니다.")
+
+      // 1. Upload PDF to cloud storage
+      const formData = new FormData()
+      const blob = new Blob([pdfBytes as BlobPart], { type: "application/pdf" })
+      formData.append("file", blob, fileName)
+      formData.append("fileName", fileName)
+
+      const uploadRes = await fetch("/api/pdf-storage", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData,
+      })
+
+      const uploadData = await uploadRes.json()
+      if (!uploadRes.ok) throw new Error(uploadData.error || "PDF 업로드 실패")
+
+      // 2. Get signed URL for email (7 days)
+      const urlRes = await fetch("/api/pdf-storage", {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ path: uploadData.path, forEmail: true }),
+      })
+
+      const urlData = await urlRes.json()
+      if (!urlRes.ok) throw new Error(urlData.error || "다운로드 링크 생성 실패")
+
+      // 3. Send email with download link
+      const fileSizeMB = (pdfBytes.length / (1024 * 1024)).toFixed(1)
+      const downloadLinkHtml = `
+        <div style="margin: 20px 0; padding: 20px; background: #f5f5f5; border-radius: 8px;">
+          <p style="margin: 0 0 12px 0; font-size: 14px; color: #666;">📎 첨부 파일</p>
+          <a href="${urlData.signedUrl}"
+             style="display: inline-block; padding: 12px 24px; background: linear-gradient(135deg, #6366f1, #8b5cf6); color: white; text-decoration: none; border-radius: 6px; font-weight: 600;">
+            📥 ${fileName} (${fileSizeMB}MB) 다운로드
+          </a>
+          <p style="margin: 12px 0 0 0; font-size: 12px; color: #999;">* 링크는 7일간 유효합니다</p>
+        </div>
+      `
+
+      const fullHtmlBody = (params.htmlBody || params.textBody || "") + downloadLinkHtml
+
+      const success = await sendEmail({
+        ...params,
+        htmlBody: fullHtmlBody,
+        // No attachments - using cloud link instead
+      })
+
+      return success
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "이메일 발송에 실패했습니다.")
+      return false
+    } finally {
+      setSending(false)
+    }
+  }, [user, getAccessToken, sendEmail])
 
   // Send collaboration invite email
   const sendInviteEmail = useCallback(async (

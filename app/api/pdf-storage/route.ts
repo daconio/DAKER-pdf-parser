@@ -140,18 +140,20 @@ export async function PATCH(request: NextRequest) {
     const user = await getUser(request)
     if (!user) return NextResponse.json({ error: "로그인이 필요합니다." }, { status: 401 })
 
-    const { path } = await request.json()
+    const { path, forEmail } = await request.json()
     if (!path || !path.startsWith(user.id)) {
       return NextResponse.json({ error: "잘못된 파일 경로입니다." }, { status: 400 })
     }
 
     const serviceClient = getServiceClient()
+    // If for email, create longer-lasting URL (7 days)
+    const expiresIn = forEmail ? 60 * 60 * 24 * 7 : 300 // 7 days or 5 minutes
     const { data, error } = await serviceClient.storage
       .from(BUCKET_NAME)
-      .createSignedUrl(path, 300) // 5 minute URL
+      .createSignedUrl(path, expiresIn)
 
     if (error || !data) return NextResponse.json({ error: error?.message || "URL 생성 실패" }, { status: 500 })
-    return NextResponse.json({ signedUrl: data.signedUrl })
+    return NextResponse.json({ signedUrl: data.signedUrl, expiresIn })
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : "알 수 없는 오류"
     return NextResponse.json({ error: msg }, { status: 500 })

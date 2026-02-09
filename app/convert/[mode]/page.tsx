@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useRef, useCallback, useEffect } from "react"
-import { useParams } from "next/navigation"
+import { useParams, useRouter } from "next/navigation"
 import Link from "next/link"
 import { ModeToggle } from "@/components/mode-toggle"
 import {
@@ -136,7 +136,27 @@ interface EditPageData {
 
 export default function ConvertPage() {
   const params = useParams()
+  const router = useRouter()
   const [mode, setMode] = useState<AppMode>(() => MODE_SLUG_MAP[params.mode as string] ?? ConversionMode.PDF_TO_PNG)
+
+  // Email panel is controlled by URL query parameter
+  const [showEmailPanel, setShowEmailPanel] = useState(false)
+
+  // Sync email panel state with URL
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search)
+    setShowEmailPanel(urlParams.get("panel") === "email")
+  }, [])
+
+  // Listen for URL changes
+  useEffect(() => {
+    const handlePopState = () => {
+      const urlParams = new URLSearchParams(window.location.search)
+      setShowEmailPanel(urlParams.get("panel") === "email")
+    }
+    window.addEventListener("popstate", handlePopState)
+    return () => window.removeEventListener("popstate", handlePopState)
+  }, [])
   const [status, setStatus] = useState<ProcessStatus>(ProcessStatus.IDLE)
   const [files, setFiles] = useState<File[]>([])
   const [generatedFiles, setGeneratedFiles] = useState<GeneratedFile[]>([])
@@ -296,7 +316,12 @@ export default function ConvertPage() {
   }, [])
 
   // Email hook and state
-  const [showEmailPanel, setShowEmailPanel] = useState(false)
+  const openEmailPanel = useCallback(() => {
+    router.push(`/convert/ai-edit?panel=email`)
+  }, [router])
+  const closeEmailPanel = useCallback(() => {
+    router.push(`/convert/ai-edit`)
+  }, [router])
   const email = useEmail({
     user: authUser,
     getAccessToken,
@@ -2884,11 +2909,16 @@ export default function ConvertPage() {
         setSaveAnimation("success")
         setTimeout(() => setSaveAnimation("idle"), 1500)
       } else {
+        // Show the actual error message from email hook
+        if (email.error) {
+          setError(email.error)
+        }
         setSaveAnimation("error")
         setTimeout(() => setSaveAnimation("idle"), 2000)
       }
       return success
-    } catch {
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "이메일 발송에 실패했습니다.")
       setSaveAnimation("error")
       setTimeout(() => setSaveAnimation("idle"), 2000)
       return false
@@ -3156,7 +3186,7 @@ export default function ConvertPage() {
             <button
               onClick={() => {
                 if (authUser) {
-                  setShowEmailPanel(true)
+                  openEmailPanel()
                 } else {
                   signInWithGoogle()
                 }
@@ -3306,7 +3336,7 @@ export default function ConvertPage() {
                     {showEmailPanel && authUser && (
                       <EmailPanel
                         isOpen={showEmailPanel}
-                        onClose={() => setShowEmailPanel(false)}
+                        onClose={closeEmailPanel}
                         emails={email.emails}
                         loading={email.loading}
                         sending={email.sending}
@@ -4229,7 +4259,8 @@ export default function ConvertPage() {
                 <div className="w-12 h-12 rounded-full bg-red-500/30 flex items-center justify-center">
                   <X className="w-8 h-8 text-red-400" />
                 </div>
-                <span className="text-lg font-medium text-red-300">저장 실패</span>
+                <span className="text-lg font-medium text-red-300">실패</span>
+                {error && <span className="text-sm text-red-400 mt-1 max-w-xs text-center">{error}</span>}
               </>
             )}
           </div>

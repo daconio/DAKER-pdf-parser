@@ -3,7 +3,7 @@ import { createClient } from "@supabase/supabase-js"
 import crypto from "crypto"
 
 // Naver Cloud Outbound Mailer API
-const NCP_API_URL = "https://mail.apigw.ntruss.com/api/v1"
+const NCP_API_BASE = "https://mail.apigw.ntruss.com"
 const ACCESS_KEY = process.env.NAVER_CLOUD_ACCESS_KEY
 const SECRET_KEY = process.env.NAVER_CLOUD_SECRET_KEY
 const SENDER_EMAIL = process.env.NAVER_CLOUD_SENDER_EMAIL
@@ -20,9 +20,13 @@ function validateEnvVars(): { valid: boolean; missing: string[] } {
 // Generate signature for Naver Cloud API
 function generateSignature(method: string, url: string, timestamp: string): string {
   const message = `${method} ${url}\n${timestamp}\n${ACCESS_KEY}`
+  console.log("[Naver Cloud API] Signature message:", JSON.stringify(message))
+  console.log("[Naver Cloud API] Access Key:", ACCESS_KEY?.substring(0, 15) + "...")
   const hmac = crypto.createHmac("sha256", SECRET_KEY!)
   hmac.update(message)
-  return hmac.digest("base64")
+  const signature = hmac.digest("base64")
+  console.log("[Naver Cloud API] Generated signature:", signature.substring(0, 20) + "...")
+  return signature
 }
 
 // Send email via Naver Cloud
@@ -33,8 +37,9 @@ async function sendNaverEmail(params: {
   attachments?: Array<{ filename: string; content: string; contentType: string }>
 }) {
   const timestamp = Date.now().toString()
-  const url = "/mails"
-  const signature = generateSignature("POST", url, timestamp)
+  // Naver Cloud API requires full path for signature
+  const apiPath = "/api/v1/mails"
+  const signature = generateSignature("POST", apiPath, timestamp)
 
   // Prepare recipients
   const recipients = params.to.map((email) => ({
@@ -60,21 +65,46 @@ async function sendNaverEmail(params: {
     ...(attachFiles.length > 0 && { attachFiles }),
   }
 
-  const response = await fetch(`${NCP_API_URL}${url}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-ncp-apigw-timestamp": timestamp,
-      "x-ncp-iam-access-key": ACCESS_KEY!,
-      "x-ncp-apigw-signature-v2": signature,
-    },
-    body: JSON.stringify(requestBody),
-  })
+  console.log("[Naver Cloud API] Sending request to:", `${NCP_API_BASE}${apiPath}`)
+  console.log("[Naver Cloud API] Sender:", SENDER_EMAIL)
+  console.log("[Naver Cloud API] Recipients:", recipients.map(r => r.address).join(", "))
+  console.log("[Naver Cloud API] Attachments:", attachFiles.length)
 
-  const data = await response.json()
+  let response: Response
+  try {
+    response = await fetch(`${NCP_API_BASE}${apiPath}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-ncp-apigw-timestamp": timestamp,
+        "x-ncp-iam-access-key": ACCESS_KEY!,
+        "x-ncp-apigw-signature-v2": signature,
+      },
+      body: JSON.stringify(requestBody),
+    })
+  } catch (fetchError) {
+    console.error("[Naver Cloud API] Fetch error:", fetchError)
+    throw new Error(`네트워크 오류: ${fetchError instanceof Error ? fetchError.message : "연결 실패"}`)
+  }
+
+  let data
+  try {
+    data = await response.json()
+  } catch {
+    const text = await response.text()
+    console.error("[Naver Cloud API] Non-JSON response:", text)
+    throw new Error(`서버 응답 오류 (${response.status}): ${text.substring(0, 100)}`)
+  }
+
+  console.log("[Naver Cloud API] Response status:", response.status)
+  console.log("[Naver Cloud API] Response data:", JSON.stringify(data, null, 2))
 
   if (!response.ok) {
-    throw new Error(data.message || "이메일 발송에 실패했습니다.")
+    // Naver Cloud returns error in different formats
+    const errorMsg = data.message || data.error?.message || data.errorMessage ||
+      (data.errors ? data.errors.map((e: { message?: string }) => e.message).join(", ") : null) ||
+      `HTTP ${response.status}: ${response.statusText}`
+    throw new Error(errorMsg)
   }
 
   return data
