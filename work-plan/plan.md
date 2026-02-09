@@ -30,13 +30,13 @@ This document outlines the plan for the upcoming work.
     - [x] Auto-Formatting: Automatically apply existing logo and page numbers to newly inserted pages.
     - [x] Fullscreen: Auto-resize content to fit browser window in fullscreen mode.
     - [x] Download Quality: Ensure downloaded PDF matches original size and resolution. (Code verified)
-    - [ ] Mode Integration: Improve and integrate AI Edit and Direct Edit functionalities.
+    - [x] Mode Integration: Tab key to toggle between AI Edit and Direct Edit modes.
     - [x] Animations: Add natural React animations for button clicks and hovers.
-    - [ ] Interaction Loop: Implement Cancel button and ESC key support for Save, Edit, and Download actions.
+    - [x] Interaction Loop: Cancel button and ESC key support for Save, Edit, and Download actions.
 
 - [ ] Phase 3: Email Feature Enhancements
     - [ ] Bulk Email: Implement bulk email registration capability.
-    - [ ] Email Editing: Allow editing of Recipient, CC, BCC, Subject, and Body.
+    - [x] Email Editing: Allow editing of Recipient, CC, BCC, Subject, and Body.
     - [ ] Attachment Quality: Ensure downloaded attachment matches original size/resolution.
     - [ ] Interaction: Click subject to enable edit mode; click again to disable.
     - [ ] Interaction: Disable edit mode on ESC key or Save button click.
