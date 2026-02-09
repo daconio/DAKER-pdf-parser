@@ -559,3 +559,70 @@ Created deployment configuration:
 
 ### Outcome
 Project is ready for one-click deployment to Vercel with proper environment configuration.
+
+---
+
+## [2026-02-09] Feature: Cloud Link Email & URL-Based Panel Navigation
+
+### Context
+1. PDF email attachments via base64 exceeded Naver Cloud's 10MB limit
+2. Email panel state wasn't reflected in the URL, making it impossible to share or bookmark
+
+### Decision
+
+#### Cloud Link Email Approach
+Instead of attaching PDFs as base64 in emails, implemented a cloud link approach:
+1. Upload PDF to Supabase Storage
+2. Generate 7-day signed URL
+3. Send email with download link button instead of attachment
+
+```typescript
+// useEmail.ts - sendPdfEmail function
+const sendPdfEmail = async (pdfBytes, fileName, params) => {
+  // 1. Upload to cloud storage
+  const formData = new FormData()
+  formData.append("file", new Blob([pdfBytes], { type: "application/pdf" }), fileName)
+  await fetch("/api/pdf-storage", { method: "POST", body: formData })
+
+  // 2. Get 7-day signed URL
+  await fetch("/api/pdf-storage", {
+    method: "PATCH",
+    body: JSON.stringify({ path, forEmail: true })
+  })
+
+  // 3. Send email with download link (not attachment)
+  const downloadLinkHtml = `<a href="${signedUrl}">📥 ${fileName} 다운로드</a>`
+  return sendEmail({ ...params, htmlBody: fullHtmlBody })
+}
+```
+
+#### URL-Based Email Panel
+Changed email panel visibility from state-based to URL query parameter:
+
+```typescript
+// Access via: /convert/ai-edit?panel=email
+useEffect(() => {
+  const urlParams = new URLSearchParams(window.location.search)
+  setShowEmailPanel(urlParams.get("panel") === "email")
+}, [])
+
+const openEmailPanel = () => router.push(`/convert/ai-edit?panel=email`)
+const closeEmailPanel = () => router.push(`/convert/ai-edit`)
+```
+
+Note: Used `window.location.search` instead of `useSearchParams` to avoid Suspense boundary requirement during static generation.
+
+#### Email History Table
+Created Supabase migration for email history:
+- Table: `email_history` with RLS policies
+- Columns: recipients, subject, body, status, ncp_request_id, etc.
+- Users can only access their own email history
+
+### API Changes
+- **pdf-storage PATCH**: Added `forEmail` parameter for 7-day URLs (vs. 5-minute default)
+- **send-email POST**: Fixed Naver Cloud API signature path (`/api/v1/mails`)
+
+### Outcome
+- PDFs of any size can now be sent via email using cloud links
+- Email panel is bookmarkable and shareable via URL
+- Email history is persisted in Supabase
