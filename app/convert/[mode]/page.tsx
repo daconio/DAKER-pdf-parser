@@ -999,6 +999,11 @@ export default function ConvertPage() {
   }
 
   const handleModeChange = (newMode: AppMode) => {
+    // If email panel is open, close it first (even if mode is the same)
+    if (showEmailPanel) {
+      closeEmailPanel()
+      if (newMode === mode) return
+    }
     if (newMode === mode) return
     // Reset states first, then change mode
     reset()
@@ -3186,10 +3191,11 @@ export default function ConvertPage() {
               <button
                 key={m.id}
                 onClick={() => handleModeChange(m.id)}
-                className={`w-12 h-12 flex flex-col items-center justify-center rounded-lg transition-all duration-200 group ${mode === m.id
-                  ? "bg-primary/10 text-primary"
-                  : "text-muted-foreground hover:bg-muted hover:text-foreground"
-                  }`}
+                className={`w-12 h-12 flex flex-col items-center justify-center rounded-lg transition-all duration-200 group ${
+                  mode === m.id && !showEmailPanel
+                    ? "bg-primary/10 text-primary"
+                    : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                }`}
                 title={m.label}
               >
                 <span className="text-xl mb-0.5">{m.emoji}</span>
@@ -3201,13 +3207,19 @@ export default function ConvertPage() {
             <div className="w-8 h-px bg-border my-2" />
             <button
               onClick={() => {
-                if (authUser) {
+                if (showEmailPanel) {
+                  closeEmailPanel()
+                } else if (authUser) {
                   openEmailPanel()
                 } else {
                   signInWithGoogle()
                 }
               }}
-              className="w-12 h-12 flex flex-col items-center justify-center rounded-lg transition-all duration-200 group text-muted-foreground hover:bg-muted hover:text-foreground"
+              className={`w-12 h-12 flex flex-col items-center justify-center rounded-lg transition-all duration-200 group ${
+                showEmailPanel
+                  ? "bg-primary/10 text-primary"
+                  : "text-muted-foreground hover:bg-muted hover:text-foreground"
+              }`}
               title={authUser ? "이메일 발송" : "로그인 후 이메일 발송"}
             >
               <Mail className="w-5 h-5 mb-0.5" />
