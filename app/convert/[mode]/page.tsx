@@ -1002,12 +1002,22 @@ export default function ConvertPage() {
     // If email panel is open, close it first (even if mode is the same)
     if (showEmailPanel) {
       closeEmailPanel()
-      if (newMode === mode) return
+      if (newMode === mode) return // Same mode (AI), just close email panel, preserve edit state
     }
     if (newMode === mode) return
-    // Reset states first, then change mode
-    reset()
-    resetEdit()
+
+    // Reset states based on mode transition
+    const isLeavingAiEdit = mode === AI_EDIT
+    const isEnteringAiEdit = newMode === AI_EDIT
+
+    if (isLeavingAiEdit) {
+      // Leaving AI Edit mode - reset edit state
+      resetEdit()
+    } else {
+      // Leaving convert mode - reset convert state
+      reset()
+    }
+
     setShowEmailPanel(false)
     setMode(newMode)
     // Update URL without causing navigation (shallow update)
@@ -1260,11 +1270,27 @@ export default function ConvertPage() {
 
       // Add new pages after current page
       const updatedPages = [...editPages]
-      updatedPages.splice(editCurrentPage + 1, 0, ...newPagesData)
+      const insertionPoint = editCurrentPage
+      updatedPages.splice(insertionPoint + 1, 0, ...newPagesData)
       setEditPages(reindexPages(updatedPages))
-      setEditCurrentPage(editCurrentPage + 1)
+      setEditCurrentPage(insertionPoint + 1)
       invalidateOriginalBytes()
       setEditStatusText("")
+
+      // Auto re-apply page numbers if they were previously applied
+      if (pageNumberBaseImagesRef.current.size > 0) {
+        const numNewPages = newPagesData.length
+        const newBaseImages = new Map<number, string>()
+        pageNumberBaseImagesRef.current.forEach((img, idx) => {
+          if (idx > insertionPoint) {
+            newBaseImages.set(idx + numNewPages, img)
+          } else {
+            newBaseImages.set(idx, img)
+          }
+        })
+        pageNumberBaseImagesRef.current = newBaseImages
+        setTimeout(() => applyPageNumbers(), 100)
+      }
     } catch {
       setError("PDF를 읽을 수 없습니다.")
     } finally {
@@ -1331,6 +1357,22 @@ export default function ConvertPage() {
     invalidateOriginalBytes()
     if (editSubMode === "direct") {
       setTimeout(() => setCanvasInitTrigger((c) => c + 1), 50)
+    }
+
+    // Auto re-apply page numbers if they were previously applied
+    if (pageNumberBaseImagesRef.current.size > 0) {
+      const newBaseImages = new Map<number, string>()
+      pageNumberBaseImagesRef.current.forEach((img, idx) => {
+        if (idx === targetIndex) {
+          // Skip deleted page
+        } else if (idx > targetIndex) {
+          newBaseImages.set(idx - 1, img)
+        } else {
+          newBaseImages.set(idx, img)
+        }
+      })
+      pageNumberBaseImagesRef.current = newBaseImages
+      setTimeout(() => applyPageNumbers(), 100)
     }
   }
 
@@ -1404,6 +1446,22 @@ export default function ConvertPage() {
     if (editSubMode === "direct" && !logoImage) {
       setTimeout(() => setCanvasInitTrigger((c) => c + 1), 50)
     }
+
+    // Auto re-apply page numbers if they were previously applied
+    if (pageNumberBaseImagesRef.current.size > 0) {
+      // Shift base image indices for pages after insertion point
+      const newBaseImages = new Map<number, string>()
+      pageNumberBaseImagesRef.current.forEach((img, idx) => {
+        if (idx > afterIndex) {
+          newBaseImages.set(idx + 1, img)
+        } else {
+          newBaseImages.set(idx, img)
+        }
+      })
+      pageNumberBaseImagesRef.current = newBaseImages
+      // Re-apply page numbers after state update
+      setTimeout(() => applyPageNumbers(), 100)
+    }
   }
 
   const duplicatePage = (targetIndex: number) => {
@@ -1432,6 +1490,20 @@ export default function ConvertPage() {
     invalidateOriginalBytes()
     if (editSubMode === "direct") {
       setTimeout(() => setCanvasInitTrigger((c) => c + 1), 50)
+    }
+
+    // Auto re-apply page numbers if they were previously applied
+    if (pageNumberBaseImagesRef.current.size > 0) {
+      const newBaseImages = new Map<number, string>()
+      pageNumberBaseImagesRef.current.forEach((img, idx) => {
+        if (idx > targetIndex) {
+          newBaseImages.set(idx + 1, img)
+        } else {
+          newBaseImages.set(idx, img)
+        }
+      })
+      pageNumberBaseImagesRef.current = newBaseImages
+      setTimeout(() => applyPageNumbers(), 100)
     }
   }
 
@@ -1508,6 +1580,20 @@ export default function ConvertPage() {
     setEditPages(reindexPages(newPages))
     setEditCurrentPage(afterIndex + 1)
     invalidateOriginalBytes()
+
+    // Auto re-apply page numbers if they were previously applied
+    if (pageNumberBaseImagesRef.current.size > 0) {
+      const newBaseImages = new Map<number, string>()
+      pageNumberBaseImagesRef.current.forEach((img, idx) => {
+        if (idx > afterIndex) {
+          newBaseImages.set(idx + 1, img)
+        } else {
+          newBaseImages.set(idx, img)
+        }
+      })
+      pageNumberBaseImagesRef.current = newBaseImages
+      setTimeout(() => applyPageNumbers(), 100)
+    }
   }
 
   // Toggle page lock
@@ -3191,14 +3277,14 @@ export default function ConvertPage() {
               <button
                 key={m.id}
                 onClick={() => handleModeChange(m.id)}
-                className={`w-12 h-12 flex flex-col items-center justify-center rounded-lg transition-all duration-200 group ${
+                className={`w-12 h-12 flex flex-col items-center justify-center rounded-lg transition-all duration-200 group hover:scale-110 active:scale-95 ${
                   mode === m.id && !showEmailPanel
-                    ? "bg-primary/10 text-primary"
+                    ? "bg-primary/10 text-primary scale-105"
                     : "text-muted-foreground hover:bg-muted hover:text-foreground"
                 }`}
                 title={m.label}
               >
-                <span className="text-xl mb-0.5">{m.emoji}</span>
+                <span className="text-xl mb-0.5 transition-transform duration-200 group-hover:scale-110">{m.emoji}</span>
                 <span className="text-[10px] font-medium opacity-70 group-hover:opacity-100">{m.label.split(' ')[0]}</span>
               </button>
             ))}
@@ -3215,14 +3301,14 @@ export default function ConvertPage() {
                   signInWithGoogle()
                 }
               }}
-              className={`w-12 h-12 flex flex-col items-center justify-center rounded-lg transition-all duration-200 group ${
+              className={`w-12 h-12 flex flex-col items-center justify-center rounded-lg transition-all duration-200 group hover:scale-110 active:scale-95 ${
                 showEmailPanel
-                  ? "bg-primary/10 text-primary"
+                  ? "bg-primary/10 text-primary scale-105"
                   : "text-muted-foreground hover:bg-muted hover:text-foreground"
               }`}
               title={authUser ? "이메일 발송" : "로그인 후 이메일 발송"}
             >
-              <Mail className="w-5 h-5 mb-0.5" />
+              <Mail className="w-5 h-5 mb-0.5 transition-transform duration-200 group-hover:scale-110" />
               <span className="text-[10px] font-medium opacity-70 group-hover:opacity-100">이메일</span>
             </button>
           </aside>
@@ -3307,7 +3393,7 @@ export default function ConvertPage() {
                         {error && <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-xl text-sm text-red-300">{error}</div>}
 
                         {files.length > 0 && (
-                          <button onClick={startConversion} className="w-full py-4 bg-primary hover:bg-primary/90 text-primary-foreground font-semibold rounded-xl transition-all duration-300 hover:shadow-lg hover:shadow-primary/25">
+                          <button onClick={startConversion} className="w-full py-4 bg-primary hover:bg-primary/90 text-primary-foreground font-semibold rounded-xl transition-all duration-200 hover:shadow-lg hover:shadow-primary/25 hover:scale-[1.02] active:scale-[0.98]">
                             변환 시작
                           </button>
                         )}
@@ -3348,11 +3434,11 @@ export default function ConvertPage() {
                           ))}
                         </div>
                         <div className="flex gap-4">
-                          <button onClick={downloadAll} className="flex-1 flex items-center justify-center gap-2 py-4 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold rounded-xl transition-all duration-300 hover:shadow-lg hover:shadow-indigo-500/25">
+                          <button onClick={downloadAll} className="flex-1 flex items-center justify-center gap-2 py-4 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold rounded-xl transition-all duration-200 hover:shadow-lg hover:shadow-indigo-500/25 hover:scale-[1.02] active:scale-[0.98]">
                             <Download className="w-5 h-5" />
                             {generatedFiles.length === 1 ? "다운로드" : "ZIP 다운로드"}
                           </button>
-                          <button onClick={reset} className="px-8 py-4 border border-gray-700 hover:border-gray-500 text-gray-300 hover:text-white font-semibold rounded-xl transition-all duration-300">
+                          <button onClick={reset} className="px-8 py-4 border border-gray-700 hover:border-gray-500 text-gray-300 hover:text-white font-semibold rounded-xl transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]">
                             새로 시작
                           </button>
                         </div>
@@ -3687,11 +3773,15 @@ export default function ConvertPage() {
 
                         {/* AI Mode: PDF Image with inline click-to-edit and drag-to-delete */}
                         {editSubMode === "ai" && editDisplayImage && (
-                          <div className="flex items-center justify-center">
+                          <div className={`flex items-center justify-center ${isFullscreen ? "w-full h-full" : ""}`}>
                             <div
                               ref={imageWrapRef}
-                              className={`relative ${eyedropperMode ? "cursor-crosshair" : "cursor-text"} select-none`}
-                              style={editPageData ? { maxHeight: isFullscreen ? "100vh" : "calc(100vh - 420px)", aspectRatio: `${editPageData.width} / ${editPageData.height}` } : undefined}
+                              className={`relative ${eyedropperMode ? "cursor-crosshair" : "cursor-text"} select-none ${isFullscreen ? "max-w-full max-h-full" : ""}`}
+                              style={editPageData ? {
+                                maxHeight: isFullscreen ? "calc(100vh - 80px)" : "calc(100vh - 420px)",
+                                maxWidth: isFullscreen ? "calc(100vw - 40px)" : undefined,
+                                aspectRatio: `${editPageData.width} / ${editPageData.height}`
+                              } : undefined}
                               onMouseDown={handleImageMouseDown}
                               onMouseMove={handleImageMouseMove}
                               onMouseUp={handleImageMouseUp}
@@ -3700,7 +3790,7 @@ export default function ConvertPage() {
                               <img
                                 src={`data:image/png;base64,${editDisplayImage}`}
                                 alt={`Page ${editCurrentPage + 1}`}
-                                className="w-full h-full rounded-lg shadow-2xl border border-gray-800 select-none"
+                                className={`w-full h-full shadow-2xl select-none ${isFullscreen ? "rounded-none border-0" : "rounded-lg border border-gray-800"}`}
                                 draggable={false}
                               />
                               {/* Live drag rectangle */}
@@ -3807,10 +3897,17 @@ export default function ConvertPage() {
                         {/* Direct Mode: Canvas for drawing/text/shapes */}
                         {editSubMode === "direct" && (
                           <div className="flex items-center justify-center">
-                            <div className="relative" style={editPageData ? { maxHeight: isFullscreen ? "100vh" : "calc(100vh - 420px)", aspectRatio: `${editPageData.width} / ${editPageData.height}` } : undefined}>
+                            <div
+                              className={`relative ${isFullscreen ? "max-w-full max-h-full" : ""}`}
+                              style={editPageData ? {
+                                maxHeight: isFullscreen ? "calc(100vh - 80px)" : "calc(100vh - 420px)",
+                                maxWidth: isFullscreen ? "calc(100vw - 40px)" : undefined,
+                                aspectRatio: `${editPageData.width} / ${editPageData.height}`
+                              } : undefined}
+                            >
                               <canvas
                                 ref={drawCanvasRef}
-                                className="w-full h-full rounded-lg shadow-2xl border border-gray-800 select-none"
+                                className={`w-full h-full shadow-2xl select-none ${isFullscreen ? "rounded-none border-0" : "rounded-lg border border-gray-800"}`}
                                 style={{ cursor: draggingTextIndex !== null ? "grabbing" : directTool === "text" ? "text" : directTool === "eraser" ? "cell" : "crosshair" }}
                                 onMouseDown={handleDirectMouseDown}
                                 onMouseMove={handleDirectMouseMove}
