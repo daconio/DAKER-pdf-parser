@@ -317,9 +317,11 @@ export default function ConvertPage() {
 
   // Email hook and state
   const openEmailPanel = useCallback(() => {
+    setShowEmailPanel(true)
     router.push(`/convert/ai-edit?panel=email`)
   }, [router])
   const closeEmailPanel = useCallback(() => {
+    setShowEmailPanel(false)
     router.push(`/convert/ai-edit`)
   }, [router])
   const email = useEmail({
