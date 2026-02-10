@@ -1,0 +1,82 @@
+# Pencil Integration Context
+
+## Project Overview
+This file serves as the context source for the Pencil MCP integration. It outlines the current project status, design system, and upcoming implementation tasks.
+
+## Design System
+
+### Typography
+- **Font Family**: Pretendard Variable (via CDN)
+- **Props**: `className="font-sans"` (default)
+- **Mono**: `className="font-mono"`
+
+### Colors (Semantic)
+Uses CSS variables defined in `@theme` (Tailwind v4).
+
+#### Backgrounds
+- `bg-background`: Main page background
+- `bg-card`: Card/Panel background
+- `bg-popover`: Dropdown/Tooltip background
+- `bg-secondary`: Secondary elements (headers, button backgrounds)
+- `bg-muted`: Muted backgrounds
+
+#### Foreground (Text/Icons)
+- `text-foreground`: Primary text
+- `text-muted-foreground`: Secondary text
+- `text-primary`: Primary brand color text
+- `text-destructive`: Error/Delete actions
+
+#### Brand & Interactive
+- `bg-primary`: Primary action buttons (Indigo/Violet/Emerald based on context)
+- `bg-primary/10`: Subtle backgrounds for active states
+- `border-input`: Input borders
+- `ring-ring`: Focus rings
+
+### Components & Styles
+
+#### Buttons
+- **Primary**: `bg-primary text-primary-foreground hover:bg-primary/90`
+- **Secondary**: `bg-secondary text-secondary-foreground hover:bg-secondary/80`
+- **Ghost**: `hover:bg-muted hover:text-foreground`
+- **Destructive**: `bg-destruct text-destruct-foreground hover:bg-destruct/90`
+
+#### Inputs
+- **Base**: `bg-transparent border border-input rounded-md px-3 py-2 text-sm`
+- **Focus**: `focus:outline-none focus:ring-2 focus:ring-ring`
+
+#### Cards & Panels
+- **Container**: `bg-card border border-border rounded-xl shadow-sm`
+- **Header**: `flex items-center justify-between p-4 border-b border-border`
+
+#### Animations
+- **Transitions**: `transition-all duration-200` or `duration-300`
+- **Enter**: `animate-in fade-in zoom-in-95`
+- **Spin**: `animate-spin` (Loader2)
+- **Pulse**: `animate-pulse` (Skeletons/Status)
+
+## Upcoming Tasks (Phase 2 & 3)
+
+### Phase 2: AI PDF Optimization
+1. **Verify image size consistency**: Check `edited_DAKER_내부매뉴얼.pdf` (pages 1 & 3) for resolution drops when copying from other PDFs.
+2. **State Persistence**: Ensure page edit state is restored when navigating sidebar menus.
+3. **Auto-Formatting**: Automatically apply existing logo and page numbers to newly inserted pages.
+4. **Fullscreen**: Auto-resize content to fit browser window in fullscreen mode.
+5. **Download Quality**: Ensure downloaded PDF matches original size and resolution.
+6. **Mode Integration**: Improve and integrate AI Edit and Direct Edit functionalities.
+7. **Animations**: Add natural React animations for button clicks and hovers.
+8. **Interaction Loop**: Implement Cancel button and ESC key support for Save, Edit, and Download actions.
+
+### Phase 3: Email Feature Enhancements
+1. **Bulk Email**: Implement bulk email registration capability.
+2. **Email Editing**: Allow editing of Recipient, CC, BCC, Subject, and Body.
+3. **Attachment Quality**: Ensure downloaded attachment matches original size/resolution.
+4. **Interaction**: Click subject to enable edit mode; click again to disable.
+5. **Interaction**: Disable edit mode on ESC key or Save button click.
+6. **Header/Footer**: Implement CRUD (Create, Read, Update, Delete) for Email Header/Footer.
+7. **Header/Footer**: Implement Move, Copy, Paste, Cut.
+8. **Header/Footer**: Implement Undo/Redo.
+9. **Email List Management**: Select, Delete, Edit, Copy, Paste registered emails.
+10. **BCC Management**: Implement CRUD for BCC emails.
+11. **BCC Management**: Implement Move, Copy, Paste, Cut.
+12. **BCC Management**: Implement Undo/Redo.
+13. **BCC List Management**: Select, Delete, Edit, Copy, Paste registered BCC emails.

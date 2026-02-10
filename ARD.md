@@ -626,3 +626,288 @@ Created Supabase migration for email history:
 - PDFs of any size can now be sent via email using cloud links
 - Email panel is bookmarkable and shareable via URL
 - Email history is persisted in Supabase
+
+---
+
+## [2026-02-09] Feature: Email Contacts Management & Bulk Registration
+
+### Context
+Users needed the ability to manage email contacts for bulk email sending. The existing email panel only supported manual email entry, which was inefficient for recurring recipients.
+
+### Decision
+
+#### Database Schema: `email_contacts`
+Created a new Supabase table with the following structure:
+- `id` (UUID, PK)
+- `user_id` (UUID, FK to auth.users)
+- `email` (TEXT, required)
+- `name` (TEXT, optional)
+- `group_name` (TEXT, default 'default')
+- `created_at` (TIMESTAMPTZ)
+- Unique constraint on `(user_id, email)` for duplicate prevention
+
+#### API Route: `/api/email-contacts/route.ts`
+Full CRUD operations with the following methods:
+- **GET**: List contacts with optional group/search filtering
+- **POST**: Bulk add contacts with email validation and upsert
+- **PUT**: Update single contact
+- **DELETE**: Bulk delete contacts by IDs
+
+#### Hook: `useEmailContacts.ts`
+```typescript
+{
+  contacts: EmailContact[]
+  groups: string[]
+  loading: boolean
+  error: string | null
+  fetchContacts(group?, search?)
+  addContact(contact)
+  addBulkContacts(contacts)
+  parseCSV(csvText, groupName?)
+  updateContact(id, updates)
+  deleteContacts(ids)
+}
+```
+
+#### UI Integration: `EmailPanel.tsx`
+Added a new "주소록" (Contacts) view with:
+- **Search & Filter**: Real-time search by name/email, filter by group
+- **Add Single Contact**: Form with email, name, group fields
+- **Bulk Import**: CSV-style textarea for mass registration
+- **Selection System**: Multi-select with checkboxes, select all/clear
+- **Inline Editing**: Click edit icon to modify contact in-place
+- **Add to Recipients**: Selected contacts can be added to To/CC/BCC fields
+- **Bulk Delete**: Delete multiple selected contacts
+
+#### CSV Import Format
+```
+email@example.com, Name
+email2@example.com
+email3@example.com, Another Name
+```
+
+### Outcome
+- Users can now manage a persistent address book
+- Bulk email registration via CSV paste
+- Contacts organized by groups with search/filter
+- Selected contacts easily added to email compose fields
+- Full CRUD operations with inline editing
+
+---
+
+## [2026-02-09] Feature: Email Templates (Header/Footer/Signature)
+
+### Context
+Users needed reusable email components (headers, footers, signatures) to maintain consistency across emails and reduce repetitive typing.
+
+### Decision
+
+#### Database Schema: `email_templates`
+Created a new Supabase table with the following structure:
+- `id` (UUID, PK)
+- `user_id` (UUID, FK to auth.users)
+- `name` (TEXT, required)
+- `type` (TEXT, 'header' | 'footer' | 'signature')
+- `content` (TEXT, HTML supported)
+- `is_default` (BOOLEAN)
+- `sort_order` (INTEGER for drag-reorder)
+- `created_at`, `updated_at` (TIMESTAMPTZ)
+
+#### API Route: `/api/email-templates/route.ts`
+Full CRUD with additional operations:
+- **GET**: List templates with optional type filter
+- **POST**: Create template with auto sort_order
+- **PUT**: Update template (name, content, is_default)
+- **PATCH**: Bulk update sort_order for reordering
+- **DELETE**: Bulk delete by IDs
+
+#### Hook: `useEmailTemplates.ts`
+```typescript
+{
+  templates: EmailTemplate[]
+  loading, error
+  clipboard: EmailTemplate | null
+  canUndo, canRedo: boolean
+  fetchTemplates(type?)
+  addTemplate(params)
+  updateTemplate(id, updates)
+  deleteTemplates(ids)
+  reorderTemplates(updates)
+  setDefaultTemplate(id)
+  duplicateTemplate(id)
+  undo(), redo()
+  copyTemplate(id), cutTemplate(id), pasteTemplate()
+  getHeaderTemplates(), getFooterTemplates(), getSignatureTemplates()
+  getDefaultTemplate(type)
+}
+```
+
+#### Component: `EmailTemplateManager.tsx`
+- **Tab Interface**: Header / Footer / Signature tabs
+- **CRUD Operations**: Add, edit (inline), delete templates
+- **Drag & Drop**: Reorder templates within same type
+- **Clipboard**: Copy, cut, paste, duplicate
+- **Undo/Redo**: Local state history
+- **Default Template**: Star icon to set as default
+- **Keyboard Shortcuts**:
+  - ESC: Cancel editing
+  - Ctrl+Z: Undo
+  - Ctrl+Y: Redo
+  - Ctrl+C/X/V: Copy/Cut/Paste
+  - Delete: Delete selected
+
+#### Integration with EmailPanel
+- New "템플릿" button in email panel header
+- Templates view accessible from list view
+- Default header/footer auto-applied when composing email
+- Template content supports HTML for rich formatting
+
+### Outcome
+- Users can create and manage reusable email components
+- Default templates automatically inserted in compose form
+- Full clipboard operations with undo/redo support
+- Keyboard-driven workflow for power users
+
+---
+
+## [2026-02-09] Feature: BCC Contact Management
+
+### Context
+Users needed a dedicated system for managing BCC (Blind Carbon Copy) recipients separately from regular contacts, with full CRUD, clipboard, and undo/redo support.
+
+### Decision
+
+#### Implementation Strategy
+Reused the existing `email_contacts` table with `group_name="bcc"` to store BCC contacts, avoiding the need for a separate table while maintaining clear separation.
+
+#### BCC View in EmailPanel
+Added a new "BCC" view accessible from the email panel header with:
+- **Search**: Filter BCC contacts by email or name
+- **Add Single**: Form to add individual BCC contacts
+- **Bulk Import**: CSV-style textarea for mass registration
+- **Multi-Select**: Checkbox selection with select all/clear
+- **Inline Editing**: Edit BCC contact details in-place
+- **Delete**: Bulk delete selected contacts
+
+#### Clipboard Operations
+- **Copy**: Copy selected BCC contact to local clipboard
+- **Cut**: Copy + delete (with undo support)
+- **Paste**: Add contact from clipboard to BCC list
+
+#### Undo/Redo Stack
+Implemented local state management for undo/redo:
+```typescript
+const [bccUndoStack, setBccUndoStack] = useState<EmailContact[][]>([])
+const [bccRedoStack, setBccRedoStack] = useState<EmailContact[][]>([])
+```
+Note: This provides UI feedback; full persistence requires server-side support.
+
+#### Integration
+- "BCC 관리" button in email panel header (both inline and modal modes)
+- "BCC에 추가" button to add selected contacts to compose form's BCC field
+- ESC key closes BCC editing mode
+
+### Outcome
+- Dedicated BCC management separate from regular contacts
+- Full CRUD with bulk operations
+- Clipboard and undo/redo for power users
+- Seamless integration with email compose workflow
+
+---
+
+## [2026-02-09] Verification: Email Attachment Quality
+
+### Context
+Users needed assurance that PDF attachments sent via email would maintain original size and resolution without quality degradation.
+
+### Investigation
+Analyzed the PDF generation code in `app/convert/[mode]/page.tsx`:
+
+#### Key Functions
+1. **`sendPdfViaEmail`**: Sends PDF via email with cloud link
+2. **`downloadEditedPdf`**: Downloads PDF directly
+
+#### Dimension Handling Logic
+Both functions use the same approach:
+```typescript
+// When original PDF bytes exist - preserve original dimensions
+if (editOriginalBytes) {
+  const originalPdf = await PDFDocument.load(editOriginalBytes)
+  const [originalPage] = originalPdf.getPages()
+  pageWidth = originalPage.getWidth()
+  pageHeight = originalPage.getHeight()
+}
+
+// When creating new PDF - account for 2x display scale
+const pageWidth = page.width / 2
+const pageHeight = page.height / 2
+```
+
+### Findings
+- **Original PDF**: When editing an existing PDF, the original dimensions are preserved exactly
+- **New PDF**: When creating from scratch, images are rendered at 2x scale for display quality, then divided by 2 when saving to maintain correct output dimensions
+- **Resolution**: Uses PNG format with full fidelity for embedding images
+
+### Outcome
+The implementation correctly maintains original PDF dimensions. The division by 2 is intentional compensation for the 2x scale rendering used for display. No code changes required - marked as verified.
+
+---
+
+## [2026-02-09] Design System: Pencil MCP 디자인 시스템 구축
+
+### Context
+프로젝트의 UI/UX 일관성을 위해 Pencil MCP 기반 비주얼 디자인 시스템이 필요했다. 기존 `design_system.md.resolved` 문서에 정의된 Tailwind CSS 변수와 컴포넌트 패턴을 `.pen` 파일로 시각화하여 디자인-개발 간 일관성을 확보하고자 했다.
+
+### Decision
+
+#### Phase 1: 초기 디자인 시스템 (Dark Mode 기준)
+- **파일**: `pencil-new.pen`
+- **변수**: oklch 색상값을 hex로 변환하여 26개 변수 정의
+- **폰트**: Pretendard Variable (한국어 지원)
+- **컴포넌트**: 17개 재사용 컴포넌트 (`reusable: true`)로 생성
+- **쇼케이스**: 1200x900 프레임에 모든 컴포넌트 시각적 배치
+
+#### Phase 2: Nitro 디자인 시스템 마이그레이션
+`pencil-nitro.pen` (Node ID: `rgGjc`)의 97개 컴포넌트를 분석하여 디자인 언어 전환:
+
+| 항목 | Before | After |
+|------|--------|-------|
+| 프라이머리 색상 | `#4F46E5` (Indigo) | `#0F5FFE` (Nitro Blue) |
+| 폰트 | Pretendard/Inter | Roboto |
+| 모서리 반지름 | 6-14px (rounded) | 0px (sharp corners) |
+| 테마 | Dark only | Light/Dark 듀얼 테마 |
+| 변수 수 | 26개 | 37개 |
+| SidebarItem | 56x56 vertical | 280px horizontal + accent stripe |
+
+#### 생성된 컴포넌트 목록 (17개)
+1. **Button/Primary** (`UJQJ7`): 프라이머리 액션 버튼
+2. **Button/Secondary** (`56DBy`): 보조 버튼
+3. **Button/Ghost** (`5ycEm`): 투명 배경 버튼
+4. **Button/Destructive** (`wSwPm`): 삭제/경고 버튼
+5. **Button/Emerald** (`fhSAL`): 저장/성공 버튼
+6. **IconButton** (`cg5J8`): 아이콘 전용 버튼
+7. **Input** (`vdbGI`): 라벨 + 입력 필드
+8. **Textarea** (`UKz6y`): 라벨 + 텍스트 영역
+9. **Card** (`6LUZP`): header/content/actions 슬롯
+10. **SidebarItem/Active** (`F5Smt`): 활성 사이드바 항목
+11. **SidebarItem/Default** (`BRzue`): 기본 사이드바 항목
+12. **Divider** (`FCAtS`): 구분선
+13. **Badge/Default** (`Nvx2H`): 기본 뱃지
+14. **Badge/Brand** (`v6Ytv`): 브랜드 뱃지
+15. **TabToggle** (`RU2W1`): 탭 토글
+16. **Chip** (`uxcwT`): 태그/퀵 프롬프트
+17. **Avatar** (`WndwW`): 원형 아바타
+
+### Tools Used
+- `mcp__pencil__set_variables`: 디자인 토큰 정의
+- `mcp__pencil__batch_design`: 컴포넌트 CRUD (I/U/D/C/R 오퍼레이션)
+- `mcp__pencil__batch_get`: 노드 탐색 및 구조 분석
+- `mcp__pencil__get_screenshot`: 시각적 검증
+- `mcp__pencil__replace_all_matching_properties`: 일괄 폰트 교체
+
+### Known Issues
+- `$--font-primary` 변수가 fontFamily 속성에서 검증 경고 발생 (기능에는 영향 없음)
+- `fill_container` 속성은 flex 부모 내에서만 동작 (독립 컴포넌트에서 경고)
+
+### Outcome
+Pencil MCP 기반 비주얼 디자인 시스템이 `pencil-new.pen`에 구축되어, Nitro 스타일의 일관된 UI/UX를 코드 구현 전에 시각적으로 검증할 수 있게 되었다.

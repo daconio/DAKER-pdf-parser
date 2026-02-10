@@ -74,6 +74,8 @@ import { getSupabase } from "@/lib/supabase"
 import { saveEditSession, loadEditSession, deleteEditSession } from "@/lib/idb"
 import { useCollaboration } from "@/hooks/useCollaboration"
 import { useEmail } from "@/hooks/useEmail"
+import { useEmailContacts } from "@/hooks/useEmailContacts"
+import { useEmailTemplates } from "@/hooks/useEmailTemplates"
 import { useImageStorage } from "@/hooks/useImageStorage"
 import { CollaborationPanel } from "@/components/ui/CollaborationPanel"
 import { EmailPanel } from "@/components/ui/EmailPanel"
@@ -336,6 +338,18 @@ export default function ConvertPage() {
     router.push(`/convert/ai-edit`)
   }, [router])
   const email = useEmail({
+    user: authUser,
+    getAccessToken,
+  })
+
+  // Email contacts hook
+  const emailContacts = useEmailContacts({
+    user: authUser,
+    getAccessToken,
+  })
+
+  // Email templates hook
+  const emailTemplates = useEmailTemplates({
     user: authUser,
     getAccessToken,
   })
@@ -3492,6 +3506,37 @@ export default function ConvertPage() {
                         pdfAvailable={editPages.some((p) => p.editedImageBase64)}
                         pdfFileName={editFileName}
                         inline={true}
+                        // Contact management props
+                        contacts={emailContacts.contacts}
+                        contactGroups={emailContacts.groups}
+                        contactsLoading={emailContacts.loading}
+                        contactsError={emailContacts.error}
+                        onFetchContacts={emailContacts.fetchContacts}
+                        onAddContact={emailContacts.addContact}
+                        onAddBulkContacts={emailContacts.addBulkContacts}
+                        onUpdateContact={emailContacts.updateContact}
+                        onDeleteContacts={emailContacts.deleteContacts}
+                        onParseCSV={emailContacts.parseCSV}
+                        // Template management props
+                        templates={emailTemplates.templates}
+                        templatesLoading={emailTemplates.loading}
+                        templatesError={emailTemplates.error}
+                        templateClipboard={emailTemplates.clipboard}
+                        canUndoTemplate={emailTemplates.canUndo}
+                        canRedoTemplate={emailTemplates.canRedo}
+                        onFetchTemplates={emailTemplates.fetchTemplates}
+                        onAddTemplate={emailTemplates.addTemplate}
+                        onUpdateTemplate={emailTemplates.updateTemplate}
+                        onDeleteTemplates={emailTemplates.deleteTemplates}
+                        onReorderTemplates={emailTemplates.reorderTemplates}
+                        onSetDefaultTemplate={emailTemplates.setDefaultTemplate}
+                        onDuplicateTemplate={emailTemplates.duplicateTemplate}
+                        onUndoTemplate={emailTemplates.undo}
+                        onRedoTemplate={emailTemplates.redo}
+                        onCopyTemplate={emailTemplates.copyTemplate}
+                        onCutTemplate={emailTemplates.cutTemplate}
+                        onPasteTemplate={emailTemplates.pasteTemplate}
+                        getDefaultTemplate={emailTemplates.getDefaultTemplate}
                       />
                     )}
 

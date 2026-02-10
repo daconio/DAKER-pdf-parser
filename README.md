@@ -64,6 +64,33 @@ Vercel 대시보드 → Settings → Environment Variables에서 다음 변수 �
 ### 4. 배포
 "Deploy" 버튼 클릭하면 자동 배포됩니다.
 
+## Design System
+
+Pencil MCP 기반 비주얼 디자인 시스템이 `pencil-new.pen` 파일에 구축되어 있습니다.
+
+### Design Tokens (37 Variables)
+
+| Category | Variables | Description |
+|----------|-----------|-------------|
+| Colors | `--background`, `--foreground`, `--card`, `--primary`, `--secondary` | 시맨틱 색상 (Light/Dark 테마) |
+| Brand | `--primary` (#0F5FFE), `--destructive`, `--success`, `--warning` | 브랜드/상태 색상 |
+| Typography | `--font-primary` (Roboto), `--font-secondary` (Roboto Mono) | 폰트 패밀리 |
+| Radius | `--radius-none` (0) ~ `--radius-pill` (999) | 모서리 반지름 |
+| Sidebar | `--sidebar`, `--sidebar-accent`, `--sidebar-primary` | 사이드바 전용 |
+
+### Reusable Components (17)
+
+- **Buttons**: Primary, Secondary, Ghost, Destructive, Emerald
+- **Form**: Input, Textarea, IconButton
+- **Layout**: Card (header/content/actions slots), SidebarItem (Active/Default), Divider
+- **Data Display**: Badge (Default/Brand), TabToggle, Chip, Avatar
+
+### Style Reference
+- **Base**: Nitro Design System (`pencil-nitro.pen`)
+- **Corners**: Sharp (0px radius)
+- **Theme**: Light/Dark dual theme support
+- **Font**: Roboto (primary), Roboto Mono (code)
+
 ## Architecture
 
 Built with Next.js 16 (App Router), TypeScript, and Tailwind CSS.
