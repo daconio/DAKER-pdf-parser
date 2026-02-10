@@ -1241,7 +1241,7 @@ export function EmailPanel({
               <>
                 <button
                   onClick={() => setView("contacts")}
-                  className="flex items-center gap-2 px-4 py-2 bg-secondary hover:bg-secondary/80 text-sm font-medium rounded-lg transition-colors"
+                  className="flex items-center gap-2 px-4 py-2 bg-secondary hover:bg-secondary/80 text-secondary-foreground text-sm font-medium rounded-lg transition-colors"
                 >
                   <Book className="w-4 h-4" />
                   주소록
@@ -1249,7 +1249,7 @@ export function EmailPanel({
                 {onFetchTemplates && (
                   <button
                     onClick={() => setView("templates")}
-                    className="flex items-center gap-2 px-4 py-2 bg-secondary hover:bg-secondary/80 text-sm font-medium rounded-lg transition-colors"
+                    className="flex items-center gap-2 px-4 py-2 bg-secondary hover:bg-secondary/80 text-secondary-foreground text-sm font-medium rounded-lg transition-colors"
                   >
                     <FileText className="w-4 h-4" />
                     템플릿
@@ -1257,7 +1257,7 @@ export function EmailPanel({
                 )}
                 <button
                   onClick={() => setView("bcc")}
-                  className="flex items-center gap-2 px-4 py-2 bg-secondary hover:bg-secondary/80 text-sm font-medium rounded-lg transition-colors"
+                  className="flex items-center gap-2 px-4 py-2 bg-secondary hover:bg-secondary/80 text-secondary-foreground text-sm font-medium rounded-lg transition-colors"
                 >
                   <EyeOff className="w-4 h-4" />
                   BCC
@@ -1611,7 +1611,7 @@ export function EmailPanel({
               <>
                 <button
                   onClick={() => setView("contacts")}
-                  className="flex items-center gap-2 px-3 py-1.5 bg-secondary hover:bg-secondary/80 text-sm font-medium rounded-lg transition-colors"
+                  className="flex items-center gap-2 px-3 py-1.5 bg-secondary hover:bg-secondary/80 text-secondary-foreground text-sm font-medium rounded-lg transition-colors"
                 >
                   <Book className="w-4 h-4" />
                   주소록
@@ -1619,7 +1619,7 @@ export function EmailPanel({
                 {onFetchTemplates && (
                   <button
                     onClick={() => setView("templates")}
-                    className="flex items-center gap-2 px-3 py-1.5 bg-secondary hover:bg-secondary/80 text-sm font-medium rounded-lg transition-colors"
+                    className="flex items-center gap-2 px-3 py-1.5 bg-secondary hover:bg-secondary/80 text-secondary-foreground text-sm font-medium rounded-lg transition-colors"
                   >
                     <FileText className="w-4 h-4" />
                     템플릿
@@ -1627,7 +1627,7 @@ export function EmailPanel({
                 )}
                 <button
                   onClick={() => setView("bcc")}
-                  className="flex items-center gap-2 px-3 py-1.5 bg-secondary hover:bg-secondary/80 text-sm font-medium rounded-lg transition-colors"
+                  className="flex items-center gap-2 px-3 py-1.5 bg-secondary hover:bg-secondary/80 text-secondary-foreground text-sm font-medium rounded-lg transition-colors"
                 >
                   <EyeOff className="w-4 h-4" />
                   BCC
