@@ -220,3 +220,78 @@ M("nodeId", "newParentId", 0)
 // Generate Image: 이미지 생성
 G("frameId", "ai", "prompt text")
 ```
+
+- [x] Phase 5: PDF 에디터 UI 디자인 완성
+    - [x] Pencil MCP 연동 확인 및 문서 열기
+        - [x] `pencil-new.pen` 파일 열기
+        - [x] Nitro 변수 30개 설정 (`set_variables`)
+    - [x] 재사용 컴포넌트 14개 생성 (`batch_design`)
+        - [x] Button/Primary (`AKbFa`): 프라이머리 버튼 (#0F5FFE)
+        - [x] Button/Secondary (`xRbe6`): 세컨더리 버튼 (#333333)
+        - [x] Button/Ghost (`0bGcr`): 고스트 버튼 (#F2F3F0)
+        - [x] Button/Destructive (`RIQ6t`): 삭제 버튼 (#A62911)
+        - [x] Button/Outline (`uTflw`): 아웃라인 버튼
+        - [x] Icon Button (`vaDnX`): 아이콘 전용 버튼
+        - [x] Input Group (`e6EYt`): 라벨 + 입력 필드
+        - [x] Sidebar Item/Active (`HQQS8`): 활성 사이드바 항목
+        - [x] Sidebar Item/Default (`Gu9FM`): 기본 사이드바 항목
+        - [x] Card (`JCe1O`): header/content/actions 슬롯
+        - [x] Tab Item/Active (`9DwRZ`): 활성 탭
+        - [x] Tab Item/Inactive (`hwYSL`): 비활성 탭
+        - [x] Avatar (`dyJGY`): 원형 아바타
+        - [x] Badge (`lvVvG`): AI 뱃지
+    - [x] PDF 에디터 화면 구성 (`IZUwq`)
+        - [x] Header: 로고, 파일명 뱃지, Save/Download 버튼
+        - [x] Sidebar: PDF Editor 타이틀, AI Edit/Direct Edit/Images/Email 메뉴
+        - [x] Canvas Area: 페이지 네비게이터, PDF 캔버스 (A4 비율)
+        - [x] AI Panel: AI Edit Mode 타이틀, 프롬프트 입력, Quick 액션 칩
+    - [x] Dark 모드 화면 생성 (`5sQS4`)
+        - [x] Light 모드 화면 복제
+        - [x] Dark 테마 색상 적용
+    - [x] 모든 컴포넌트에 디자인 변수 적용
+        - [x] 버튼: `$--primary`, `$--secondary`, `$--destructive` 등
+        - [x] 입력: `$--card`, `$--input`, `$--muted-foreground`
+        - [x] 사이드바: `$--sidebar`, `$--sidebar-accent`, `$--sidebar-primary`
+        - [x] 레이아웃: `$--background`, `$--border`, `$--card`
+    - [x] 스크린샷 검증 완료
+    - [x] Git 커밋 및 푸시 (`0cf3e77`)
+
+## Phase 5 컴포넌트 ID 참조 (최신)
+
+### pencil-new.pen 파일 (업데이트됨)
+
+| 컴포넌트 | Node ID | 주요 자식 노드 |
+|----------|---------|----------------|
+| Button/Primary | `AKbFa` | icon: `Igcv6`, label: `BqDC2` |
+| Button/Secondary | `xRbe6` | icon: `0cMnT`, label: `syjAV` |
+| Button/Ghost | `0bGcr` | icon: `UbBJY`, label: `V6dGq` |
+| Button/Destructive | `RIQ6t` | icon: `DhpEO`, label: `dqSFv` |
+| Button/Outline | `uTflw` | icon: `otZ6s`, label: `ufqAf` |
+| Icon Button | `vaDnX` | icon: `QwLFu` |
+| Input Group | `e6EYt` | label: `9oZ5P`, box: `GGX82`, placeholder: `7WsiM` |
+| Sidebar Item/Active | `HQQS8` | icon: `J6hMs`, label: `DCltV` |
+| Sidebar Item/Default | `Gu9FM` | icon: `4NXOp`, label: `kPbpO` |
+| Card | `JCe1O` | header: `kwWoy`, content: `2WrnH`, actions: `sqk0N` |
+| Tab Item/Active | `9DwRZ` | label: `1vivZ` |
+| Tab Item/Inactive | `hwYSL` | label: `LJS4T` |
+| Avatar | `dyJGY` | text: `nbrLl` |
+| Badge | `lvVvG` | label: `6ftFU` |
+
+### PDF 에디터 화면 구조
+
+| 요소 | Node ID | 설명 |
+|------|---------|------|
+| PDF Editor (Light) | `IZUwq` | 메인 에디터 화면 |
+| Header | `t5YjD` | 상단 헤더 |
+| Header Left | `7k4GA` | 로고 + 파일명 |
+| Header Right | `ptBjT` | Save/Download 버튼 |
+| Main Content | `Mm0Ga` | 사이드바 + 캔버스 영역 |
+| Sidebar | `nuGt6` | 좌측 사이드바 |
+| Sidebar Header | `DKynq` | 사이드바 타이틀 |
+| Sidebar Content | `KDa5S` | 메뉴 항목들 |
+| Canvas Area | `ct2lo` | 캔버스 영역 |
+| Page Navigator | `91F2U` | 페이지 네비게이션 |
+| Canvas Wrapper | `S0BZ5` | 캔버스 래퍼 |
+| PDF Canvas | `PHu5R` | PDF 표시 영역 |
+| AI Panel | `2BrdE` | AI 편집 패널 |
+| PDF Editor (Dark) | `5sQS4` | 다크 모드 화면 |
