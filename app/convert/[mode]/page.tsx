@@ -71,7 +71,7 @@ import {
   getPdfPageCount,
 } from "@/lib/pdfService"
 import { getSupabase } from "@/lib/supabase"
-import { saveEditSession, loadEditSession, deleteEditSession } from "@/lib/idb"
+import { saveEditSession, loadEditSession, deleteEditSession, serializeHistoryMap, deserializeHistoryMap } from "@/lib/idb"
 import { useCollaboration } from "@/hooks/useCollaboration"
 import { useEmail } from "@/hooks/useEmail"
 import { useEmailContacts } from "@/hooks/useEmailContacts"
@@ -406,6 +406,13 @@ export default function ConvertPage() {
       if (data && data.editPages.length > 0) {
         // Cast - textItems is omitted from saved data, add empty arrays
         const restored = data.editPages.map((p) => ({ ...p, textItems: [] as TextItemData[] }))
+        // Restore undo/redo history if available
+        if (data.undoHistory) {
+          undoHistoryRef.current = deserializeHistoryMap(data.undoHistory)
+        }
+        if (data.redoHistory) {
+          redoHistoryRef.current = deserializeHistoryMap(data.redoHistory)
+        }
         setRecoveryData({ ...data, editPages: restored })
         setShowRecoveryDialog(true)
       }
@@ -425,6 +432,9 @@ export default function ConvertPage() {
         editFileName: editFileName,
         editCurrentPage: editCurrentPage,
         timestamp: Date.now(),
+        // Save undo/redo history for session recovery
+        undoHistory: serializeHistoryMap(undoHistoryRef.current),
+        redoHistory: serializeHistoryMap(redoHistoryRef.current),
       })
       setTempSaveStatus("saved")
       // Reset to idle after 2 seconds
@@ -444,6 +454,9 @@ export default function ConvertPage() {
       editFileName: editFileName,
       editCurrentPage: editCurrentPage,
       timestamp: Date.now(),
+      // Save undo/redo history for session recovery
+      undoHistory: serializeHistoryMap(undoHistoryRef.current),
+      redoHistory: serializeHistoryMap(redoHistoryRef.current),
     })
     setTempSaveStatus("saved")
     setTimeout(() => setTempSaveStatus("idle"), 2000)

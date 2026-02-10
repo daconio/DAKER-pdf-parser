@@ -1,7 +1,10 @@
 const DB_NAME = "daker-pdf-parser"
-const DB_VERSION = 1
+const DB_VERSION = 2
 const STORE_NAME = "edit-sessions"
 const SESSION_KEY = "current-session"
+
+// Serializable history format (Map can't be stored directly in IndexedDB)
+type SerializedHistory = Array<[number, string[]]>
 
 interface EditSessionData {
   editPages: Array<{
@@ -14,6 +17,18 @@ interface EditSessionData {
   editFileName: string
   editCurrentPage: number
   timestamp: number
+  // Undo/Redo history per page (optional for backward compatibility)
+  undoHistory?: SerializedHistory
+  redoHistory?: SerializedHistory
+}
+
+// Helper functions to convert Map <-> Array for serialization
+export function serializeHistoryMap(map: Map<number, string[]>): SerializedHistory {
+  return Array.from(map.entries())
+}
+
+export function deserializeHistoryMap(arr: SerializedHistory | undefined): Map<number, string[]> {
+  return new Map(arr || [])
 }
 
 function openDB(): Promise<IDBDatabase> {
