@@ -4015,10 +4015,11 @@ export default function ConvertPage() {
                                   }
                                 }}
                               />
-                              {/* Text input hint overlay */}
+                              {/* Text input mode indicator */}
                               {directTextInput && (
-                                <div className="absolute top-3 left-3 z-10 px-3 py-1.5 bg-gray-900/80 backdrop-blur-sm rounded-lg text-xs text-gray-300 pointer-events-none">
-                                  입력 중... (Enter: 확인, ESC: 취소)
+                                <div className="absolute top-3 left-3 z-10 px-3 py-1.5 bg-indigo-600/90 backdrop-blur-sm rounded-lg text-xs text-white pointer-events-none flex items-center gap-2">
+                                  <Type className="w-3.5 h-3.5" />
+                                  텍스트 입력 모드
                                 </div>
                               )}
                               {/* Text drag hint overlay */}
@@ -4039,34 +4040,49 @@ export default function ConvertPage() {
                                   }}
                                 />
                               )}
-                              {/* Hidden input for IME support (Korean, Japanese, Chinese, etc.) */}
+                              {/* Visible text input box for precise text editing */}
                               {directTextInput && (
-                                <input
-                                  ref={hiddenTextInputRef}
-                                  type="text"
-                                  value={directTextValue}
-                                  onChange={handleHiddenInputChange}
-                                  onKeyDown={handleHiddenInputKeyDown}
-                                  onCompositionStart={() => setIsComposing(true)}
-                                  onCompositionEnd={() => setIsComposing(false)}
-                                  onBlur={() => {
-                                    // Re-focus if still in text input mode
-                                    if (directTextInput && hiddenTextInputRef.current) {
-                                      setTimeout(() => hiddenTextInputRef.current?.focus(), 0)
-                                    }
-                                  }}
-                                  className="absolute opacity-0 pointer-events-auto"
+                                <div
+                                  className="absolute z-20 pointer-events-auto"
                                   style={{
                                     left: `${(directTextInput.x / (drawCanvasRef.current?.width || 1)) * 100}%`,
                                     top: `${(directTextInput.y / (drawCanvasRef.current?.height || 1)) * 100}%`,
-                                    width: "1px",
-                                    height: "1px",
+                                    transform: "translateY(-2px)",
                                   }}
-                                  autoComplete="off"
-                                  autoCorrect="off"
-                                  autoCapitalize="off"
-                                  spellCheck={false}
-                                />
+                                >
+                                  <input
+                                    ref={hiddenTextInputRef}
+                                    type="text"
+                                    value={directTextValue}
+                                    onChange={handleHiddenInputChange}
+                                    onKeyDown={handleHiddenInputKeyDown}
+                                    onCompositionStart={() => setIsComposing(true)}
+                                    onCompositionEnd={() => setIsComposing(false)}
+                                    onBlur={() => {
+                                      // Re-focus if still in text input mode
+                                      if (directTextInput && hiddenTextInputRef.current) {
+                                        setTimeout(() => hiddenTextInputRef.current?.focus(), 0)
+                                      }
+                                    }}
+                                    placeholder="텍스트 입력..."
+                                    className="bg-white dark:bg-gray-900 border-2 border-indigo-500 rounded px-2 py-1 outline-none shadow-lg ring-4 ring-indigo-500/20"
+                                    style={{
+                                      fontSize: `${directTextSize * (drawCanvasRef.current?.offsetHeight || 1) / (drawCanvasRef.current?.height || 1)}px`,
+                                      fontFamily: directTextFontFamily,
+                                      color: drawColor,
+                                      minWidth: "150px",
+                                      maxWidth: "400px",
+                                    }}
+                                    autoComplete="off"
+                                    autoCorrect="off"
+                                    autoCapitalize="off"
+                                    spellCheck={false}
+                                  />
+                                  <div className="flex items-center gap-2 mt-1.5 text-xs">
+                                    <span className="px-2 py-0.5 bg-indigo-600 text-white rounded font-medium">Enter: 확인</span>
+                                    <span className="px-2 py-0.5 bg-gray-500 text-white rounded">ESC: 취소</span>
+                                  </div>
+                                </div>
                               )}
                               {editPageData?.editedImageBase64 && (
                                 <div className="absolute top-3 right-3 flex gap-2">
